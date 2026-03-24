@@ -1,0 +1,19 @@
+services:
+  whisper:
+    build: .
+    container_name: whisper
+    restart: unless-stopped
+
+    ports:
+      - "8001:8000"
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+
+    shm_size: "4gb"
