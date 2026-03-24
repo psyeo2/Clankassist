@@ -1,184 +1,217 @@
 # Architecture
 
-## Overall
+## Overview
+
+Diakonos-Assist is currently organised around a lightweight orchestration service and a small number of specialised upstream services.
+
+The practical architecture is:
+
+- `whisper-api` handles speech-to-text
+- `ollama` handles planning / LLM inference
+- `process-api` handles orchestration, validation, execution, and response shaping
+- internal homelab services provide the actual functionality
+
+The important point is that `process-api` is the coordinator, not the heavy AI runtime.
+
+## High-Level Flow
 
 ```mermaid
 flowchart LR
 
-%% CLIENT LAYER
-subgraph Client["🎤 Client Node (Mac Mini / Pi)"]
-    mic[Microphone]
-    wake[Wake Word]
-    stream[Audio Stream Client]
-    speaker[Speaker]
-end
-
-%% GPU SERVER
-subgraph Diakonos["🖥️ Diakonos (GPU VM)"]
-    stt[Whisper STT API]
-    llm[Ollama LLM]
-end
-
-%% K3S CLUSTER
-subgraph K3s["☸️ k3s Cluster"]
-    orchestrator["Orchestrator API (FastAPI)"]
-    registry[Tool Registry]
-    executor[Tool Executor]
-    tts[Piper TTS API]
-end
-
-%% SERVICES
-subgraph Services["🔌 Internal Services"]
-    grocy[Grocy API]
-    jellyseer[Jellyseerr API]
-    gpu[NVIDIA Exporter]
-end
-
-%% FLOW
-mic --> wake
-wake --> stream
-stream -->|audio| stt
-
-stt -->|text| orchestrator
-orchestrator -->|tool defs + prompt| llm
-llm -->|tool call JSON| orchestrator
-
-orchestrator --> registry
-orchestrator -->|execute| executor
-
-executor --> grocy
-executor --> jellyseer
-executor --> gpu
-
-executor -->|result| orchestrator
-orchestrator -->|text response| tts
-tts -->|audio| stream
-stream --> speaker
+audio[Audio Input] --> whisper[whisper-api]
+whisper -->|transcript| process[process-api]
+process -->|tool planning prompt| ollama[oLLaMa]
+ollama -->|tool + args + response| process
+process -->|HTTP/tool execution| services[Internal Services]
+services -->|results| process
+process -->|JSON + speech text| caller[Client / Voice Layer]
 ```
 
-## Orchestrator
+## Deployment Split
+
+```mermaid
+flowchart LR
+
+subgraph GPUHost["GPU Machine"]
+  whisper[whisper-api]
+  ollama[oLLaMa]
+end
+
+subgraph Anywhere["Any Network-Reachable Machine"]
+  process[process-api]
+end
+
+subgraph Services["Internal Services"]
+  gpu[GPU Exporter]
+  jelly[Jellyseerr]
+  future[Future Services]
+end
+
+whisper --> process
+process --> ollama
+process --> gpu
+process --> jelly
+process --> future
+```
+
+### Why this split
+
+`ollama/` and `whisper-api/` should live on a GPU machine because they are inference-heavy.
+
+`process-api/` can run almost anywhere because it mainly does:
+
+- HTTP handling
+- tool validation
+- tool execution dispatch
+- response formatting
+- logging
+
+## `process-api` Internals
+
+### Request modes
+
+`POST /api/v1/process` has two modes:
+
+1. speech mode
+2. direct mode
+
+Speech mode:
+
+- input: `{ "speech": "..." }`
+- sends available tools to oLLaMa
+- receives a selected tool and args
+- executes the selected tool
+
+Direct mode:
+
+- input: `{ "tool": "...", "args": {} }`
+- skips oLLaMa entirely
+- executes the tool immediately
+
+This makes direct mode useful for deterministic testing.
+
+### Internal layers
 
 ```mermaid
 flowchart TD
 
-input[User Text Input] --> ctx[Context Builder]
-
-ctx --> prompt[Prompt Builder]
-registry[Tool Registry] --> prompt
-
-prompt --> llmcall[Call LLM]
-
-llmcall --> decision{LLM Output Type}
-
-decision -->|Tool Call| parse[Parse JSON]
-decision -->|Direct Reply| respond[Return Text]
-
-parse --> exec[Call Tool Executor]
-exec --> result[Tool Result]
-
-result --> followup[LLM Follow-up Prompt]
-followup --> respond
-
-respond --> output[Final Response]
+request[HTTP Request] --> controller[process controller]
+controller --> planner[oLLaMa planner step]
+planner --> registry[tool registry]
+registry --> validation[tool validation]
+validation --> executors[tool executors]
+executors --> integrations[integration clients]
+integrations --> services[real services]
+services --> integrations
+integrations --> executors
+executors --> controller
+controller --> response[JSON response]
 ```
 
-## Tool System (registry + executor split)
+## Tool System
 
-```mermaid
-flowchart LR
+The tool system is intentionally split into three distinct concerns.
 
-subgraph Registry["Tool Registry"]
-    defs[Tool Definitions JSON/YAML]
-end
+### 1. Tool definitions
 
-subgraph Executor["Tool Executor"]
-    v1[Validate Input]
-    c1[HTTP Request]
-    a1[Auth Handling]
-    r1[Retry / Errors]
-    res[Return Result]
-end
+Location:
 
-defs --> v1
-v1 --> c1
-c1 --> a1
-a1 --> r1
-r1 --> res
-```
+- `process-api/src/tools/definitions/`
 
-## LLM Interaction
+Purpose:
 
-```mermaid
-flowchart TD
+- define what the LLM is allowed to choose
+- describe arguments and intent at a high level
 
-tools[Tool Definitions] --> prompt[System Prompt]
+### 2. Tool registry
 
-user[User Input] --> prompt
+Location:
 
-prompt --> llm["LLM (Ollama)"]
+- `process-api/src/tools/registry.ts`
 
-llm --> output{Output}
+Purpose:
 
-output -->|Text| text[Return Response]
-output -->|JSON Tool Call| json[Structured Call]
+- gather definitions into one catalogue
+- expose planner-visible tools
+- filter tools based on runtime availability
+- provide lookup by tool name
 
-json --> exec[Execute Tool]
-exec --> result[Result]
+### 3. Tool executors
 
-result --> followup[Send Back to LLM]
-followup --> llm
-```
+Location:
 
-## Voice Pipeline
+- `process-api/src/tools/executors.ts`
 
-```mermaid
-flowchart LR
+Purpose:
 
-mic[Mic] --> wake[Wake Word]
+- take a validated tool selection
+- call the correct integration
+- shape the result
+- generate a short `speech` string
 
-wake --> stream[Stream Audio]
+## Integration Layer
 
-stream --> stt[Whisper]
+Location:
 
-stt --> text[Transcript]
+- `process-api/src/integrations/`
 
-text --> orchestrator[Orchestrator]
+Purpose:
 
-orchestrator --> response[Response Text]
+- contain the real request/response logic for upstream services
+- isolate auth, base URLs, HTTP request shapes, and parsing
 
-response --> tts[Piper]
+Current integrations:
 
-tts --> audio[Audio Output]
+- GPU status
+- Jellyseerr
 
-audio --> speaker[Speaker]
-```
+This layer is where service-specific code belongs. It is not where tool selection belongs.
 
-## Tool Example
+## Unsupported Requests
 
-```mermaid
-flowchart TD
+Unsupported requests are handled explicitly via:
 
-intent[LLM decides: grocy.add_item]
+- `system.unsupported_request`
 
-intent --> args[Extract Args]
+The planner should choose this when the user asks for something outside the supported tool set.
 
-args --> executor[Tool Executor]
+This avoids forcing random requests into the closest available tool.
 
-executor --> request[POST /add]
+## Logging Model
 
-request --> grocy[Grocy API]
+Logging is request-scoped and controlled by `LOG_LEVEL`.
 
-grocy --> response[API Response]
+Supported levels:
 
-response --> executor
-executor --> orchestrator
-```
+- `INFO`
+- `SUMMARY`
+- `NONE`
 
-## DB Integration?
+At `INFO`, the API logs:
 
-```mermaid
-flowchart LR
+- the incoming request
+- outbound API calls
+- planner selection
+- the final request summary
 
-orchestrator --> memory[(Conversation DB)]
-memory --> orchestrator
-```
+At `SUMMARY`, only the final per-request line is logged.
+
+## What Is Not In This Service
+
+`process-api` does not currently do:
+
+- raw audio ingestion
+- speech-to-text
+- conversation memory
+- clarification dialogues
+- dynamic tool registration from a database
+
+Those are either handled elsewhere or are future work.
+
+## Future Direction
+
+The biggest architectural upgrade under consideration is moving tool registration from code to a database-backed registry with a deterministic publishing flow.
+
+See:
+
+- [Tool Registry Future](./TOOL-REGISTRY-FUTURE.md)
