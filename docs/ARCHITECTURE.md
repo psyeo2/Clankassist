@@ -9,6 +9,7 @@ The practical architecture is:
 - `whisper-api` handles speech-to-text
 - `ollama` handles planning / LLM inference
 - `process-api` handles orchestration, validation, execution, and response shaping
+- `pipeline-server` handles audio-in, audio-out voice orchestration
 - `piper-api` handles text-to-speech using Piper's built-in HTTP server and a baked-in local voice model
 - internal homelab services provide the actual functionality
 
@@ -19,14 +20,18 @@ The important point is that `process-api` is the coordinator, not the heavy AI r
 ```mermaid
 flowchart LR
 
-audio[Audio Input] --> whisper[whisper-api]
-whisper -->|transcript| process[process-api]
+audio[Audio Input] --> pipeline[pipeline-server]
+pipeline -->|audio file| whisper[whisper-api]
+whisper -->|transcript| pipeline
+pipeline -->|transcript| process[process-api]
 process -->|tool planning prompt| ollama[oLLaMa]
 ollama -->|tool + args + response| process
 process -->|HTTP/tool execution| services[Internal Services]
 services -->|results| process
-process -->|speech text| piper[piper-api]
-piper -->|WAV audio| speaker[Playback / Speaker]
+process -->|speech text| pipeline
+pipeline -->|speech text| piper[piper-api]
+piper -->|WAV audio| pipeline
+pipeline -->|WAV audio| speaker[Playback / Speaker]
 process -->|JSON data| caller[Client / Voice Layer]
 ```
 
@@ -42,6 +47,7 @@ subgraph GPUHost["GPU Machine"]
 end
 
 subgraph Anywhere["Any Network-Reachable Machine"]
+  pipeline[pipeline-server]
   process[process-api]
 end
 
@@ -51,9 +57,12 @@ subgraph Services["Internal Services"]
   future[Future Services]
 end
 
-whisper --> process
+pipeline --> whisper
+whisper --> pipeline
+pipeline --> process
 process --> ollama
-process --> piper
+process --> pipeline
+pipeline --> piper
 process --> gpu
 process --> jelly
 process --> future
@@ -84,7 +93,25 @@ In the current setup, `piper-api/` is intentionally simple:
 - response formatting
 - logging
 
+`pipeline-server/` can also run almost anywhere because it mainly does:
+
+- request intake
+- upstream HTTP calls
+- failure forwarding
+- binary audio response handling
+
 ## `process-api` Internals
+
+`pipeline-server` sits in front of `process-api` for device-facing audio flows.
+
+Its job is:
+
+- receive the uploaded audio file
+- call `whisper-api`
+- call `process-api`
+- call `piper-api`
+- return the generated WAV file
+- surface failure context with service and state metadata
 
 ### Request modes
 

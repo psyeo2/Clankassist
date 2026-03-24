@@ -33,11 +33,14 @@ The current `piper-api/` setup is intentionally minimal:
 
 Run:
 
+- `pipeline-server/`
 - `process-api/`
 
-This service can run on almost any machine that has network access to:
+These services can run on almost any machine that has network access to:
 
 - the oLLaMa host
+- `whisper-api`
+- `piper-api`
 - the services it integrates with
 - any caller that needs to reach it
 
@@ -51,6 +54,13 @@ This service can run on almost any machine that has network access to:
 - executor dispatch
 - service orchestration
 - logging
+
+`pipeline-server` mainly performs:
+
+- audio upload handling
+- upstream HTTP orchestration
+- response piping
+- failure forwarding
 
 That work is light compared with STT and LLM inference.
 
@@ -68,6 +78,7 @@ In the current repo state, `piper-api` serves the baked-in model at:
 
 ### Machine B: orchestration host
 
+- pipeline-server on port `8003`
 - process-api on port `3001`
 
 ### Internal service hosts
@@ -82,6 +93,12 @@ In the current repo state, `piper-api` serves the baked-in model at:
 
 - `OLLAMA_URL`
 - each configured integration endpoint
+
+`pipeline-server` must be able to reach:
+
+- `WHISPER_URL`
+- `PROCESS_URL`
+- `PIPER_URL`
 
 If your wider system uses `whisper-api`, the caller or upstream layer must also be able to reach that service.
 

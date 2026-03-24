@@ -141,3 +141,5 @@ vite.config.ts.timestamp-*
 clean-oceans-test-full.wav
 
 voice-models/
+
+__pycache__/
