@@ -4,8 +4,9 @@ Diakonos-Assist is a small homelab voice-assistant stack.
 
 At a high level, the system is split into:
 
-- speech-to-text on a GPU machine
-- LLM planning on a GPU machine
+- speech-to-text on an AI host
+- LLM planning on an AI host
+- text-to-speech on an AI host
 - a process/orchestration API that can run almost anywhere
 - optional internal services such as GPU metrics and Jellyseerr
 
@@ -55,17 +56,27 @@ See:
 
 - [Whisper API README](./whisper-api/README.md)
 
-### `piper/`
+### `piper-api/`
 
-Vendored Piper sources and related files.
+Text-to-speech service built around Piper's own HTTP server.
 
-This repository currently includes Piper assets and source, but the active orchestration work in this repo is centred around:
+This is the opposite side of `whisper-api`:
 
-- `process-api`
-- `ollama`
-- `whisper-api`
+- it accepts text
+- it returns WAV audio
+- it is intended to speak the response string produced by `process-api`
 
-Treat `piper/` as a bundled dependency/work area rather than the main application entrypoint.
+Unlike `whisper-api`, this is a thin deployment wrapper rather than a custom app. It installs Piper from PyPI, bakes the local Cori voice into the image, and runs Piper's own HTTP server.
+
+The current default setup serves:
+
+- `piper-api/cori-high/en_GB-cori-high.onnx`
+- on `http://<host>:8002`
+- with no required environment variables
+
+See:
+
+- [Piper API README](./piper-api/README.md)
 
 ## Deployment Guidance
 
@@ -75,12 +86,14 @@ The practical deployment split is:
 
 - `ollama/`
 - `whisper-api/`
+- `piper-api/`
 
 Reason:
 
-- both are AI inference workloads
-- both benefit strongly from CUDA/GPU acceleration
-- both are heavier than the orchestration layer
+- these are the voice and model-serving parts of the stack
+- `ollama/` and `whisper-api/` materially benefit from GPU acceleration
+- `piper-api/` is lighter and can run on CPU, but it still makes sense to keep it on the same AI host for a simple voice pipeline
+- `piper-api/` is standalone, so it can be copied on its own like `whisper-api/`
 
 ### Run this wherever convenient
 
@@ -108,7 +121,9 @@ The intended voice flow is:
 5. oLLaMa chooses a tool and arguments.
 6. `process-api` executes that tool.
 7. `process-api` returns structured data and a short spoken response.
-8. A TTS layer can then speak that response.
+8. `piper-api` turns that response into WAV audio for playback.
+
+For the current repo setup, `piper-api` uses the baked-in Cori voice by default.
 
 ## Repository Layout
 
@@ -116,9 +131,9 @@ The intended voice flow is:
 .
 ├── docs/                 Top-level architecture and planning docs
 ├── ollama/               Docker Compose for local LLM inference
+├── piper-api/            Piper-based text-to-speech service
 ├── process-api/          Main orchestration / tool-execution API
 ├── whisper-api/          GPU-backed speech-to-text service
-├── piper/                Bundled Piper sources/assets
 └── test-audio/           Example audio files
 ```
 
@@ -134,6 +149,11 @@ Process API docs:
 
 - [Process API Overview](./process-api/README.md)
 - [Adding a Service](./process-api/docs/add-service.md)
+
+Voice service docs:
+
+- [Whisper API README](./whisper-api/README.md)
+- [Piper API README](./piper-api/README.md)
 
 ## Current Status
 

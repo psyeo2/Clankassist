@@ -10,8 +10,24 @@ Copy and run:
 
 - `ollama/`
 - `whisper-api/`
+- `piper-api/`
 
-These are the AI inference workloads and are the ones that materially benefit from a GPU.
+These are the voice and model-serving parts of the stack.
+
+Important distinction:
+
+- `ollama/` and `whisper-api/` are the components that most clearly need the GPU
+- `piper-api/` can run on CPU, but it usually belongs on the same AI host for operational simplicity
+
+`piper-api/` is designed to be copied and run on its own, similar to `whisper-api/`. It does not depend on a vendored Piper source tree being present beside it.
+
+The current `piper-api/` setup is intentionally minimal:
+
+- `docker compose up --build`
+- Piper installed from PyPI
+- local Cori model baked into the image
+- default host port `8002`
+- no required env configuration
 
 ### Any convenient machine
 
@@ -44,6 +60,11 @@ That work is light compared with STT and LLM inference.
 
 - oLLaMa on port `11434`
 - whisper-api on port `8001`
+- piper-api on port `8002`
+
+In the current repo state, `piper-api` serves the baked-in model at:
+
+- `piper-api/cori-high/en_GB-cori-high.onnx`
 
 ### Machine B: orchestration host
 
@@ -63,6 +84,8 @@ That work is light compared with STT and LLM inference.
 - each configured integration endpoint
 
 If your wider system uses `whisper-api`, the caller or upstream layer must also be able to reach that service.
+
+If you use `piper-api` for playback, the caller or downstream voice layer must also be able to reach that service.
 
 ## Environment Configuration
 

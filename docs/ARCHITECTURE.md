@@ -9,6 +9,7 @@ The practical architecture is:
 - `whisper-api` handles speech-to-text
 - `ollama` handles planning / LLM inference
 - `process-api` handles orchestration, validation, execution, and response shaping
+- `piper-api` handles text-to-speech using Piper's built-in HTTP server and a baked-in local voice model
 - internal homelab services provide the actual functionality
 
 The important point is that `process-api` is the coordinator, not the heavy AI runtime.
@@ -24,7 +25,9 @@ process -->|tool planning prompt| ollama[oLLaMa]
 ollama -->|tool + args + response| process
 process -->|HTTP/tool execution| services[Internal Services]
 services -->|results| process
-process -->|JSON + speech text| caller[Client / Voice Layer]
+process -->|speech text| piper[piper-api]
+piper -->|WAV audio| speaker[Playback / Speaker]
+process -->|JSON data| caller[Client / Voice Layer]
 ```
 
 ## Deployment Split
@@ -35,6 +38,7 @@ flowchart LR
 subgraph GPUHost["GPU Machine"]
   whisper[whisper-api]
   ollama[oLLaMa]
+  piper[piper-api]
 end
 
 subgraph Anywhere["Any Network-Reachable Machine"]
@@ -49,6 +53,7 @@ end
 
 whisper --> process
 process --> ollama
+process --> piper
 process --> gpu
 process --> jelly
 process --> future
@@ -57,6 +62,19 @@ process --> future
 ### Why this split
 
 `ollama/` and `whisper-api/` should live on a GPU machine because they are inference-heavy.
+
+`piper-api/` is lighter and can run on CPU, but keeping it on the same AI host usually makes the voice path simpler:
+
+- STT in
+- planning/execution in the middle
+- TTS out
+
+In the current setup, `piper-api/` is intentionally simple:
+
+- no custom FastAPI wrapper
+- no dependency on `piper1-gpl/`
+- no required environment variables
+- default voice baked into the image from `piper-api/cori-high/`
 
 `process-api/` can run almost anywhere because it mainly does:
 
@@ -202,6 +220,7 @@ At `SUMMARY`, only the final per-request line is logged.
 
 - raw audio ingestion
 - speech-to-text
+- text-to-speech
 - conversation memory
 - clarification dialogues
 - dynamic tool registration from a database
