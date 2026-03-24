@@ -32,7 +32,7 @@ The app is mounted under `/api/v<API_VERSION>`, for example `/api/v1`.
 
 - `GET /api/v1/ping`
 - `POST /api/v1/process` supports two modes:
-  - `speech` mode: validates the speech string and returns planner metadata until the oLLaMa layer is implemented
+  - `speech` mode: sends the `speech` string to oLLaMa, receives a tool selection, then executes that tool
   - direct execution mode: accepts a selected tool plus args and executes it through the tool executor layer
 
 Example health response:
@@ -67,6 +67,71 @@ The controller should eventually act as a coordinator between:
 - the tool registry
 - the concrete integration clients
 - the final voice-friendly response
+
+## `process` Modes
+
+`POST /api/v1/process` currently works in two distinct ways.
+
+### Speech mode
+
+Request shape:
+
+```json
+{
+  "speech": "what temp is my gpu at the moment?"
+}
+```
+
+Flow:
+
+1. The API reads `speech`.
+2. The API sends the request plus the available tool definitions to oLLaMa.
+3. oLLaMa returns JSON containing:
+   - `tool`
+   - `args`
+   - `response`
+4. The API validates the selected tool.
+5. The API executes the selected tool.
+6. The API returns the execution result plus a short spoken response.
+
+Important:
+
+- speech mode depends on both `OLLAMA_URL` and `OLLAMA_MODEL`
+- if the configured model does not exist on the oLLaMa instance at `OLLAMA_URL`, the API will return the upstream oLLaMa error
+- speech mode does not work unless the configured oLLaMa host is the one that actually has the model pulled
+
+### Direct execution mode
+
+Request shape:
+
+```json
+{
+  "tool": "gpu.get_temp",
+  "args": {}
+}
+```
+
+or:
+
+```json
+{
+  "selection": {
+    "tool": "gpu.get_temp",
+    "args": {}
+  }
+}
+```
+
+Flow:
+
+1. The client provides the tool name directly.
+2. The API skips oLLaMa entirely.
+3. The API validates and executes the tool immediately.
+
+Important:
+
+- direct mode is useful for testing the executor and integration path without involving the planner
+- direct mode can succeed even when speech mode fails, because it does not call oLLaMa
 
 ## Tools Layer
 
@@ -295,7 +360,7 @@ This is the intended split:
 
 ## Direct Execution Testing
 
-Until the oLLaMa planner exists, `POST /api/v1/process` can execute a tool directly.
+`POST /api/v1/process` can execute a tool directly without going through oLLaMa.
 
 Example request:
 
@@ -324,10 +389,9 @@ Example request using the planner-style wrapper:
 
 The following pieces are not implemented yet:
 
-- `src/controllers/process.ts` does not call oLLaMa yet
-- there is no oLLaMa client or prompt/response parsing logic yet
-- there is no planner step that turns `speech` into a selected tool yet
+- there is no retry, fallback, or clarification path if the planner picks the wrong tool or returns invalid output
 - there is not yet a persistent conversation or clarification flow for ambiguous requests
+  This means a wrong tool choice or a missing model currently fails the request instead of triggering a follow-up question.
 
 ## Environment Variables
 
@@ -337,6 +401,7 @@ Current known environment variables:
 PORT=3001
 API_VERSION=1
 OLLAMA_URL=http://localhost:11434
+OLLAMA_MODEL=gemma3:4b
 GPU_EXPORTER_URL=http://192.168.1.161:9400
 GPU_TEMPERATURE_METRIC=DCGM_FI_DEV_GPU_TEMP
 GPU_VRAM_USED_METRIC=DCGM_FI_DEV_FB_USED

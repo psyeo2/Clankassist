@@ -3,11 +3,10 @@ import type { RequestHandler } from "express";
 import {
   executeToolSelection,
   isToolSelection,
-  listExecutableTools,
   listTools,
-  plannerOutputSchema,
 } from "../tools";
 import { handleResponse } from "../utils/responseHandler";
+import type { ToolSelection } from "../tools";
 
 const getDirectToolSelection = (body: unknown) => {
   if (!body || typeof body !== "object") {
@@ -37,10 +36,169 @@ const getDirectToolSelection = (body: unknown) => {
   return null;
 };
 
+interface PlannerResponse {
+  tool: string;
+  args: Record<string, unknown>;
+  response: string;
+}
+
+interface OllamaChatResponse {
+  message?: {
+    content?: string;
+  };
+  error?: string;
+}
+
+const plannerResponseSchema = {
+  type: "object",
+  properties: {
+    tool: {
+      type: "string",
+      description:
+        "Exact tool name to execute. Return an empty string if no available tool can fulfil the request.",
+    },
+    args: {
+      type: "object",
+      description: "Arguments for the selected tool. Use an empty object when none are required.",
+    },
+    response: {
+      type: "string",
+      description:
+        "Short voice-assistant reply for the user. If no tool matches, explain that briefly.",
+    },
+  },
+  required: ["tool", "args", "response"],
+  additionalProperties: false,
+} as const;
+
 const getErrorStatus = (error: unknown): number =>
   typeof (error as { status?: unknown }).status === "number"
     ? ((error as { status: number }).status)
     : 500;
+
+const getOllamaChatUrl = (): string => {
+  const rawBaseUrl = globalThis.process.env.OLLAMA_URL?.trim();
+
+  if (!rawBaseUrl) {
+    const error = new Error("OLLAMA_URL is not configured.");
+    (error as Error & { status: number }).status = 500;
+    throw error;
+  }
+
+  const baseUrl = /^https?:\/\//i.test(rawBaseUrl)
+    ? rawBaseUrl
+    : `http://${rawBaseUrl}`;
+  const trimmedBaseUrl = baseUrl.replace(/\/+$/, "");
+
+  return trimmedBaseUrl.endsWith("/api")
+    ? `${trimmedBaseUrl}/chat`
+    : `${trimmedBaseUrl}/api/chat`;
+};
+
+const getOllamaModel = (): string => {
+  const model = globalThis.process.env.OLLAMA_MODEL?.trim();
+
+  if (!model) {
+    const error = new Error("OLLAMA_MODEL is not configured.");
+    (error as Error & { status: number }).status = 500;
+    throw error;
+  }
+
+  return model;
+};
+
+const isPlannerResponse = (value: unknown): value is PlannerResponse => {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+
+  return (
+    typeof candidate.tool === "string" &&
+    typeof candidate.response === "string" &&
+    typeof candidate.args === "object" &&
+    candidate.args !== null &&
+    !Array.isArray(candidate.args)
+  );
+};
+
+const createPlanningPrompt = (speech: string): string => {
+  const tools = listTools().map((tool) => ({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+  }));
+
+  return [
+    "You are a tool planner for a local voice assistant.",
+    "Pick exactly one tool when a request matches an available tool.",
+    "If no tool can fulfil the request, return an empty string for tool and an empty object for args.",
+    "Keep the response field short and natural for speech output.",
+    "Use only the exact tool names provided.",
+    `Available tools: ${JSON.stringify(tools)}`,
+    `User request: ${speech}`,
+  ].join("\n");
+};
+
+const planToolSelection = async (speech: string): Promise<PlannerResponse> => {
+  const response = await fetch(getOllamaChatUrl(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: getOllamaModel(),
+      stream: false,
+      format: plannerResponseSchema,
+      options: {
+        temperature: 0,
+      },
+      messages: [
+        {
+          role: "user",
+          content: createPlanningPrompt(speech),
+        },
+      ],
+    }),
+  });
+
+  const payload = (await response.json()) as OllamaChatResponse;
+
+  if (!response.ok) {
+    const error = new Error(
+      payload.error || `oLLaMa request failed with status ${response.status}.`
+    );
+    (error as Error & { status: number }).status = response.status;
+    throw error;
+  }
+
+  const content = payload.message?.content;
+
+  if (!content) {
+    const error = new Error("oLLaMa returned an empty planning response.");
+    (error as Error & { status: number }).status = 502;
+    throw error;
+  }
+
+  let parsedContent: unknown;
+
+  try {
+    parsedContent = JSON.parse(content);
+  } catch {
+    const error = new Error("oLLaMa returned invalid JSON.");
+    (error as Error & { status: number }).status = 502;
+    throw error;
+  }
+
+  if (!isPlannerResponse(parsedContent)) {
+    const error = new Error("oLLaMa returned an invalid planner payload.");
+    (error as Error & { status: number }).status = 502;
+    throw error;
+  }
+
+  return parsedContent;
+};
 
 export const process: RequestHandler = async (req, res): Promise<void> => {
   try {
@@ -50,6 +208,7 @@ export const process: RequestHandler = async (req, res): Promise<void> => {
       const execution = await executeToolSelection(directSelection);
 
       handleResponse(res, 200, "Tool executed successfully", {
+        response: execution.speech,
         execution,
       });
       return;
@@ -66,11 +225,27 @@ export const process: RequestHandler = async (req, res): Promise<void> => {
       return;
     }
 
-    handleResponse(res, 501, "Speech processing pipeline not implemented yet", {
+    const plan = await planToolSelection(speech.trim());
+
+    if (plan.tool.trim() === "") {
+      handleResponse(res, 422, "No supported task identified", {
+        speech,
+        response: plan.response,
+      });
+      return;
+    }
+
+    const selection: ToolSelection = {
+      tool: plan.tool,
+      args: plan.args,
+    };
+    const execution = await executeToolSelection(selection);
+
+    handleResponse(res, 200, "Tool executed successfully", {
       speech,
-      availableTools: listTools(),
-      executableTools: listExecutableTools(),
-      plannerOutputSchema,
+      selection,
+      response: execution.speech || plan.response,
+      execution,
     });
   } catch (error) {
     const status = getErrorStatus(error);
@@ -83,6 +258,10 @@ export const process: RequestHandler = async (req, res): Promise<void> => {
 
     handleResponse(res, status, message, {
       error: error instanceof Error ? error.message : "Unknown error",
+      response:
+        status >= 500
+          ? "I ran into a problem while processing that request."
+          : message,
     });
   }
 };
