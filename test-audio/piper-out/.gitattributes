@@ -1,2 +1,0 @@
-*.onnx filter=lfs diff=lfs merge=lfs -text
-piper-api/cori-high/*.onnx filter=lfs diff=lfs merge=lfs -text
