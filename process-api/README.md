@@ -21,6 +21,7 @@ At the moment, the health route is implemented and the `process` route exists on
 The API is an Express + TypeScript service with:
 
 - global request logging
+- env-based log levels via `LOG_LEVEL=INFO|SUMMARY|NONE`
 - versioned routing via `/api/v<version>`
 - consistent JSON responses
 - centralized 404 and error handling
@@ -99,6 +100,8 @@ Important:
 - speech mode depends on both `OLLAMA_URL` and `OLLAMA_MODEL`
 - if the configured model does not exist on the oLLaMa instance at `OLLAMA_URL`, the API will return the upstream oLLaMa error
 - speech mode does not work unless the configured oLLaMa host is the one that actually has the model pulled
+- speech mode only advertises tools that are actually available under the current environment configuration
+- unsupported or out-of-bounds requests should resolve to `system.unsupported_request` and return `422 No supported task identified`
 
 ### Direct execution mode
 
@@ -169,6 +172,12 @@ src/tools/
 
 This is a better fit than keeping the old `toolSchemas` folder.
 
+Built-in tool groups currently are:
+
+- GPU status tools
+- Jellyseerr request tools
+- a `system.unsupported_request` fallback used when no supported service matches the request
+
 ## What Exists Now
 
 There are now three separate layers:
@@ -188,6 +197,14 @@ This means the project now has both:
 - execution-facing clients
 
 That separation is intentional.
+
+There is also a runtime availability filter in `src/tools/registry.ts`.
+
+That means:
+
+- configured tools are shown to the planner
+- unavailable tools can still exist in code
+- optional services such as Jellyseerr can be hidden from speech mode when their required env vars are missing
 
 ## Likely Architecture Going Forward
 
@@ -315,6 +332,7 @@ Its job is to:
 - expose the full list of available tools to the planner
 - provide name-based lookup for a selected tool
 - define the expected planner output shape
+- filter speech-mode tools based on runtime configuration
 
 This is the right abstraction boundary:
 
@@ -385,6 +403,25 @@ Example request using the planner-style wrapper:
 }
 ```
 
+## Logging
+
+Request logging is request-scoped and uses a shared request ID so related lines can be followed as one trace.
+
+`LOG_LEVEL` controls how much is printed:
+
+- `INFO`: full per-request trace
+- `SUMMARY`: final one-line request summary only
+- `NONE`: no request logging
+
+At `INFO`, a typical request includes:
+
+- the incoming request line
+- outbound API calls made by the API itself
+- planner selection output
+- the final summary line
+
+At `SUMMARY`, only the final summary line is logged.
+
 ## Current Gaps
 
 The following pieces are not implemented yet:
@@ -392,6 +429,8 @@ The following pieces are not implemented yet:
 - there is no retry, fallback, or clarification path if the planner picks the wrong tool or returns invalid output
 - there is not yet a persistent conversation or clarification flow for ambiguous requests
   This means a wrong tool choice or a missing model currently fails the request instead of triggering a follow-up question.
+- there is no separate speech-to-text layer in this service
+  `POST /process` expects text, not raw audio
 
 ## Environment Variables
 
@@ -400,6 +439,7 @@ Current known environment variables:
 ```env
 PORT=3001
 API_VERSION=1
+LOG_LEVEL=INFO
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=gemma3:4b
 GPU_EXPORTER_URL=http://192.168.1.161:9400
@@ -422,6 +462,7 @@ JELLYSEERR_REQUEST_USER_ID=
 ## Project Structure
 
 ```text
+docs/            Project documentation
 src/
   controllers/     Express route handlers
   integrations/    External service clients and API request/response types
@@ -431,3 +472,7 @@ src/
   utils/           Shared response helpers
   index.ts         App bootstrap
 ```
+
+## Further Docs
+
+- [Adding a Service](./docs/add-service.md)

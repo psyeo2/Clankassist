@@ -7,5 +7,6 @@ export const handleResponse = <T = unknown>(
   data: T | null = null,
 ): void => {
   const payload: Record<string, unknown> = { status, message, data };
+  res.locals.responsePayload = payload;
   res.status(status).json(payload);
 };

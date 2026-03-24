@@ -1,3 +1,5 @@
+import { logEvent, serialiseForLog } from "../../utils/logger";
+
 export class HttpServiceError extends Error {
   status: number;
   responseBody: unknown;
@@ -78,8 +80,29 @@ const getErrorMessage = (
 export const requestJson = async <T>(
   serviceName: string,
   url: string,
-  init?: RequestInit
+  init?: RequestInit,
+  options?: {
+    logBody?: boolean;
+  }
 ): Promise<T> => {
+  const method = init?.method ?? "GET";
+  const startedAt = Date.now();
+  const requestBody =
+    options?.logBody === false
+      ? undefined
+      : typeof init?.body === "string"
+      ? init.body
+      : init?.body !== undefined
+        ? serialiseForLog(init.body)
+        : undefined;
+
+  logEvent("outbound_api_request", {
+    service: serviceName,
+    method,
+    url,
+    body: requestBody,
+  });
+
   let response: Response;
 
   try {
@@ -93,6 +116,15 @@ export const requestJson = async <T>(
 
   if (!response.ok) {
     const parsedBody = await parseErrorBody(response);
+    logEvent("outbound_api_response", {
+      service: serviceName,
+      method,
+      url,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      body: requestBody,
+      error: parsedBody,
+    });
 
     throw new HttpServiceError(
       getErrorMessage(serviceName, response, parsedBody),
@@ -101,14 +133,46 @@ export const requestJson = async <T>(
     );
   }
 
-  return (await response.json()) as T;
+  const payload = (await response.json()) as T;
+
+  logEvent("outbound_api_response", {
+    service: serviceName,
+    method,
+    url,
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+    body: requestBody,
+  });
+
+  return payload;
 };
 
 export const requestText = async (
   serviceName: string,
   url: string,
-  init?: RequestInit
+  init?: RequestInit,
+  options?: {
+    logBody?: boolean;
+  }
 ): Promise<string> => {
+  const method = init?.method ?? "GET";
+  const startedAt = Date.now();
+  const requestBody =
+    options?.logBody === false
+      ? undefined
+      : typeof init?.body === "string"
+      ? init.body
+      : init?.body !== undefined
+        ? serialiseForLog(init.body)
+        : undefined;
+
+  logEvent("outbound_api_request", {
+    service: serviceName,
+    method,
+    url,
+    body: requestBody,
+  });
+
   let response: Response;
 
   try {
@@ -122,6 +186,15 @@ export const requestText = async (
 
   if (!response.ok) {
     const parsedBody = await parseErrorBody(response);
+    logEvent("outbound_api_response", {
+      service: serviceName,
+      method,
+      url,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      body: requestBody,
+      error: parsedBody,
+    });
 
     throw new HttpServiceError(
       getErrorMessage(serviceName, response, parsedBody),
@@ -130,5 +203,16 @@ export const requestText = async (
     );
   }
 
-  return response.text();
+  const payload = await response.text();
+
+  logEvent("outbound_api_response", {
+    service: serviceName,
+    method,
+    url,
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+    body: requestBody,
+  });
+
+  return payload;
 };
