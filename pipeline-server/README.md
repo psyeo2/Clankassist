@@ -1,13 +1,13 @@
 # Pipeline Server
 
-`pipeline-server/` is the audio-in, audio-out orchestrator for the voice assistant.
+`pipeline-server/` is the audio-in pipeline orchestrator for the voice assistant.
 
-It accepts an uploaded audio file, runs the full server-side pipeline, and returns a WAV response:
+It accepts an uploaded audio file, runs the full server-side pipeline, and can return either a WAV response or plain text:
 
 1. send audio to `whisper-api`
 2. send the transcript to `process-api`
-3. send the response text to `piper-api`
-4. return the generated speech audio
+3. if `outputType=audio`, send the response text to `piper-api`
+4. return either generated speech audio or the raw response text
 
 This is the service an ESP device should talk to if you want the device to stay simple.
 
@@ -47,16 +47,30 @@ Request:
 - Content-Type: `multipart/form-data`
 - Body:
   - `file`: audio file
+  - `outputType`: optional, `audio` or `text`
+    - defaults to `audio`
 
-Example:
+Audio example:
+
+```bash
+curl -X POST http://localhost:8003/pipeline \
+  -F "file=@test-audio/pipeline-test/hello.wav" \
+  -F "outputType=audio" \
+  --output response.wav
+```
+
+Text example:
 
 ```bash
 curl -X POST http://localhost:8003/pipeline \
   -F "file=@../test-audio/piper-out/hello.wav" \
-  --output response.wav
+  -F "outputType=text"
 ```
 
-On success, the response body is WAV audio from `piper-api`.
+On success:
+
+- `outputType=audio` returns WAV audio from `piper-api`
+- `outputType=text` returns the final `process-api` response as `text/plain`
 
 ## Error Behaviour
 
@@ -84,6 +98,7 @@ Example error response:
 
 Pipeline states:
 
+- `validating_request`
 - `receiving_audio`
 - `transcribing_audio`
 - `processing_text`
@@ -135,6 +150,7 @@ From the repo root:
 ```bash
 curl -X POST http://localhost:8003/pipeline \
   -F "file=@test-audio/piper-out/hello.wav" \
+  -F "outputType=audio" \
   --output test-audio/pipeline-response.wav
 ```
 
@@ -142,5 +158,5 @@ If the upstream services are working, that should:
 
 - transcribe `test-audio/piper-out/hello.wav`
 - generate a text response through `process-api`
-- synthesise the response through `piper-api`
+- synthesise the response through `piper-api` when `outputType=audio`
 - save the returned audio to `test-audio/pipeline-response.wav`

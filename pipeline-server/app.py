@@ -4,7 +4,7 @@ from urllib.parse import urlparse, urlunparse
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 load_dotenv()
@@ -191,6 +191,23 @@ def extract_response_text(payload: dict[str, Any]) -> str:
     )
 
 
+def parse_output_type(raw_output_type: str | None) -> str:
+    if raw_output_type is None or raw_output_type.strip() == "":
+        return "audio"
+
+    output_type = raw_output_type.strip().lower()
+    if output_type in {"audio", "text"}:
+        return output_type
+
+    raise PipelineError(
+        status_code=400,
+        message="Invalid outputType. Expected 'audio' or 'text'.",
+        service="pipeline-server",
+        state="validating_request",
+        upstream_error={"outputType": raw_output_type},
+    )
+
+
 @app.exception_handler(PipelineError)
 async def handle_pipeline_error(_: Any, error: PipelineError) -> JSONResponse:
     return JSONResponse(
@@ -221,7 +238,11 @@ def health() -> dict[str, Any]:
 
 
 @app.post("/pipeline")
-async def pipeline(file: UploadFile = File(...)) -> Response:
+async def pipeline(
+    file: UploadFile = File(...),
+    output_type: str = Form("audio", alias="outputType"),
+) -> Response:
+    requested_output_type = parse_output_type(output_type)
     audio_bytes = await file.read()
 
     if not audio_bytes:
@@ -265,6 +286,9 @@ async def pipeline(file: UploadFile = File(...)) -> Response:
         state="processing_text",
     )
     response_text = extract_response_text(process_payload)
+
+    if requested_output_type == "text":
+        return Response(content=response_text, media_type="text/plain")
 
     piper_response = request_upstream(
         service="piper-api",

@@ -7,7 +7,7 @@ At a high level, the system is split into:
 - speech-to-text on an AI host
 - LLM planning on an AI host
 - text-to-speech on an AI host
-- an audio-in, audio-out pipeline service
+- an audio-in pipeline service with audio or text output
 - a process/orchestration API that can run almost anywhere
 - optional internal services such as GPU metrics and Jellyseerr
 
@@ -48,8 +48,8 @@ This is the simplest service for an onboard device to talk to:
 - it accepts audio
 - it sends that audio to `whisper-api`
 - it sends the transcript to `process-api`
-- it sends the response text to `piper-api`
-- it returns the generated audio back to the caller
+- it can send the response text to `piper-api`
+- it returns either generated audio or plain text back to the caller
 
 This service does not need a GPU. It is just HTTP orchestration across the voice stack.
 
@@ -142,8 +142,8 @@ The intended device-facing voice flow is:
 5. `process-api` sends the text and available tools to oLLaMa.
 6. oLLaMa chooses a tool and arguments.
 7. `process-api` executes that tool and returns a spoken response string.
-8. `pipeline-server` sends that response string to `piper-api`.
-9. `pipeline-server` returns WAV audio for playback.
+8. `pipeline-server` can send that response string to `piper-api`.
+9. `pipeline-server` returns either WAV audio for playback or plain text.
 
 For the current repo setup, `piper-api` uses the baked-in Cori voice by default.
 
@@ -154,7 +154,7 @@ For the current repo setup, `piper-api` uses the baked-in Cori voice by default.
 ├── docs/                 Top-level architecture and planning docs
 ├── ollama/               Docker Compose for local LLM inference
 ├── piper-api/            Piper-based text-to-speech service
-├── pipeline-server/      Audio-in, audio-out orchestration service
+├── pipeline-server/      Audio-in orchestration service with audio or text output
 ├── process-api/          Main orchestration / tool-execution API
 ├── whisper-api/          GPU-backed speech-to-text service
 └── test-audio/           Example audio files
@@ -207,6 +207,6 @@ The wider end-to-end voice system still depends on how you connect:
 ## Notes
 
 - `process-api` expects text, not raw audio.
-- `pipeline-server` is the service that turns audio in into audio out.
+- `pipeline-server` is the service that turns audio in into audio out or text out.
 - The GPU machine split is a deployment recommendation, not a hard requirement.
 - If you want to extend the assistant, start in `process-api` and follow the service-addition guide.
