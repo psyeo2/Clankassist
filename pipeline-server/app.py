@@ -4,7 +4,7 @@ from urllib.parse import urlparse, urlunparse
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 load_dotenv()
@@ -208,43 +208,32 @@ def parse_output_type(raw_output_type: str | None) -> str:
     )
 
 
-@app.exception_handler(PipelineError)
-async def handle_pipeline_error(_: Any, error: PipelineError) -> JSONResponse:
-    return JSONResponse(
-        status_code=error.status_code,
-        content={
-            "status": error.status_code,
-            "message": error.message,
-            "data": {
-                "service": error.service,
-                "state": error.state,
-                "upstreamStatus": error.upstream_status,
-                "upstreamError": error.upstream_error,
-            },
-        },
-    )
+def infer_audio_filename(content_type: str | None) -> str:
+    media_type = (content_type or "").split(";", 1)[0].strip().lower()
+
+    if media_type in {"audio/wav", "audio/x-wav", "audio/wave"}:
+        return "audio.wav"
+    if media_type in {"audio/mpeg", "audio/mp3"}:
+        return "audio.mp3"
+    if media_type in {"audio/flac", "audio/x-flac"}:
+        return "audio.flac"
+    if media_type == "audio/ogg":
+        return "audio.ogg"
+    if media_type in {"audio/mp4", "audio/x-m4a"}:
+        return "audio.m4a"
+    if media_type == "audio/webm":
+        return "audio.webm"
+
+    return "audio.wav"
 
 
-@app.get("/")
-def health() -> dict[str, Any]:
-    return {
-        "status": "ok",
-        "services": {
-            "whisper": get_whisper_url(),
-            "process": get_process_url(),
-            "piper": get_piper_url(),
-        },
-    }
-
-
-@app.post("/pipeline")
-async def pipeline(
-    file: UploadFile = File(...),
-    output_type: str = Form("audio", alias="outputType"),
+def run_pipeline(
+    *,
+    audio_bytes: bytes,
+    filename: str,
+    content_type: str,
+    requested_output_type: str,
 ) -> Response:
-    requested_output_type = parse_output_type(output_type)
-    audio_bytes = await file.read()
-
     if not audio_bytes:
         raise PipelineError(
             status_code=400,
@@ -260,9 +249,9 @@ async def pipeline(
         url=get_whisper_url(),
         files={
             "file": (
-                file.filename or "audio.wav",
+                filename,
                 audio_bytes,
-                file.content_type or "application/octet-stream",
+                content_type,
             )
         },
     )
@@ -301,4 +290,66 @@ async def pipeline(
     return Response(
         content=piper_response.content,
         media_type=piper_response.headers.get("Content-Type", "audio/wav"),
+    )
+
+
+@app.exception_handler(PipelineError)
+async def handle_pipeline_error(_: Any, error: PipelineError) -> JSONResponse:
+    return JSONResponse(
+        status_code=error.status_code,
+        content={
+            "status": error.status_code,
+            "message": error.message,
+            "data": {
+                "service": error.service,
+                "state": error.state,
+                "upstreamStatus": error.upstream_status,
+                "upstreamError": error.upstream_error,
+            },
+        },
+    )
+
+
+@app.get("/")
+def health() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "services": {
+            "whisper": get_whisper_url(),
+            "process": get_process_url(),
+            "piper": get_piper_url(),
+        },
+    }
+
+
+@app.post("/pipeline")
+async def pipeline(
+    file: UploadFile = File(...),
+    output_type: str = Form("audio", alias="outputType"),
+) -> Response:
+    requested_output_type = parse_output_type(output_type)
+    audio_bytes = await file.read()
+
+    return run_pipeline(
+        audio_bytes=audio_bytes,
+        filename=file.filename or "audio.wav",
+        content_type=file.content_type or "application/octet-stream",
+        requested_output_type=requested_output_type,
+    )
+
+
+@app.post("/pipeline/raw")
+async def pipeline_raw(
+    request: Request,
+    output_type: str = Query("audio", alias="outputType"),
+) -> Response:
+    requested_output_type = parse_output_type(output_type)
+    content_type = request.headers.get("content-type") or "application/octet-stream"
+    audio_bytes = await request.body()
+
+    return run_pipeline(
+        audio_bytes=audio_bytes,
+        filename=infer_audio_filename(content_type),
+        content_type=content_type,
+        requested_output_type=requested_output_type,
     )

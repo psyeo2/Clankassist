@@ -2,7 +2,7 @@
 
 `pipeline-server/` is the audio-in pipeline orchestrator for the voice assistant.
 
-It accepts an uploaded audio file, runs the full server-side pipeline, and can return either a WAV response or plain text:
+It accepts audio, runs the full server-side pipeline, and can return either a WAV response or plain text:
 
 1. send audio to `whisper-api`
 2. send the transcript to `process-api`
@@ -38,7 +38,7 @@ Example response:
 }
 ```
 
-### 2. Full Voice Pipeline
+### 2. Multipart Voice Pipeline
 
 **POST /pipeline**
 
@@ -65,6 +65,41 @@ Text example:
 curl -X POST http://localhost:8003/pipeline \
   -F "file=@../test-audio/piper-out/hello.wav" \
   -F "outputType=text"
+```
+
+On success:
+
+- `outputType=audio` returns WAV audio from `piper-api`
+- `outputType=text` returns the final `process-api` response as `text/plain`
+
+### 3. Raw-Body Voice Pipeline
+
+**POST /pipeline/raw?outputType=audio|text**
+
+Request:
+
+- Content-Type: audio type such as `audio/wav`, or `application/octet-stream`
+- Body:
+  - raw audio bytes
+- Query params:
+  - `outputType`: optional, `audio` or `text`
+    - defaults to `audio`
+
+Audio example:
+
+```bash
+curl -X POST "http://localhost:8003/pipeline/raw?outputType=audio" \
+  -H "Content-Type: audio/wav" \
+  --data-binary "@test-audio/piper-out/hello.wav" \
+  --output response.wav
+```
+
+Text example:
+
+```bash
+curl -X POST "http://localhost:8003/pipeline/raw?outputType=text" \
+  -H "Content-Type: audio/wav" \
+  --data-binary "@test-audio/piper-out/hello.wav"
 ```
 
 On success:
@@ -160,3 +195,11 @@ If the upstream services are working, that should:
 - generate a text response through `process-api`
 - synthesise the response through `piper-api` when `outputType=audio`
 - save the returned audio to `test-audio/pipeline-response.wav`
+
+Raw-body example:
+
+```bash
+curl -X POST "http://localhost:8003/pipeline/raw?outputType=text" \
+  -H "Content-Type: audio/wav" \
+  --data-binary "@test-audio/piper-out/hello.wav"
+```
