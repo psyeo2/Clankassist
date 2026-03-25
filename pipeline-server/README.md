@@ -140,6 +140,22 @@ Pipeline states:
 - `synthesising_speech`
 - `loading_configuration`
 
+## Logging
+
+`LOG_LEVEL` controls request logging:
+
+- `INFO`: request-scoped trace including incoming request, outbound upstream requests, outbound upstream responses, and request completion
+- `SUMMARY`: keep the normal one-line HTTP access log only
+- `NONE`: suppress request logging
+
+At `INFO`, upstream calls to `whisper-api`, `process-api`, and `piper-api` are logged with:
+
+- service name
+- request URL and method
+- request payload summary
+- response status and duration
+- response body summary or upstream error
+
 ## Environment Variables
 
 `pipeline-server` resolves three upstream service URLs.
@@ -150,6 +166,8 @@ Pipeline states:
   Base URL or full `/api/v1/process` URL for `process-api`
 - `PIPER_URL`
   Base URL or full synthesis URL for `piper-api`
+- `LOG_LEVEL`
+  `INFO`, `SUMMARY`, or `NONE`. Default: `INFO`
 - `PIPELINE_REQUEST_TIMEOUT_SECONDS`
   Optional timeout for each upstream HTTP request. Default: `120`
 
@@ -159,6 +177,7 @@ Examples:
 WHISPER_URL=http://localhost:8001
 PROCESS_URL=http://localhost:3001
 PIPER_URL=http://localhost:8002
+LOG_LEVEL=INFO
 PIPELINE_REQUEST_TIMEOUT_SECONDS=120
 ```
 

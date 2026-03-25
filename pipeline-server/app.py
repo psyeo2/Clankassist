@@ -1,6 +1,11 @@
 import os
+from contextvars import ContextVar
+from datetime import datetime, timezone
+import logging
+from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse, urlunparse
+from uuid import uuid4
 
 import requests
 from dotenv import load_dotenv
@@ -12,6 +17,161 @@ load_dotenv()
 app = FastAPI()
 
 DEFAULT_TIMEOUT_SECONDS = float(os.getenv("PIPELINE_REQUEST_TIMEOUT_SECONDS", "120"))
+MAX_LOG_VALUE_LENGTH = 1200
+TRACE_PREFIX = "            | "
+REQUEST_ID_CONTEXT: ContextVar[str | None] = ContextVar("pipeline_request_id", default=None)
+
+
+def truncate(value: str) -> str:
+    if len(value) > MAX_LOG_VALUE_LENGTH:
+        return f"{value[:MAX_LOG_VALUE_LENGTH]}...<truncated>"
+
+    return value
+
+
+def get_log_level() -> str:
+    raw_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+
+    if raw_level == "NONE":
+        return "none"
+    if raw_level == "SUMMARY":
+        return "summary"
+
+    return "info"
+
+
+def should_log_info() -> bool:
+    return get_log_level() == "info"
+
+
+def should_log_summary() -> bool:
+    log_level = get_log_level()
+    return log_level in {"info", "summary"}
+
+
+def configure_uvicorn_access_logging() -> None:
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.disabled = get_log_level() == "none"
+
+
+def serialise_for_log(value: Any) -> str:
+    if value is None:
+        return ""
+
+    if isinstance(value, bytes):
+        return f"<{len(value)} bytes>"
+
+    if isinstance(value, str):
+        return truncate(value)
+
+    try:
+        import json
+
+        return truncate(json.dumps(value))
+    except Exception:
+        return truncate(str(value))
+
+
+def format_value(value: Any) -> str:
+    serialised = serialise_for_log(value)
+    if serialised == "":
+        return ""
+    if isinstance(value, str):
+        return f'"{serialised}"'
+
+    return serialised
+
+
+def build_log_fields(details: dict[str, Any], *, include_request_id: bool) -> str:
+    fields: list[str] = []
+
+    if include_request_id:
+        request_id = REQUEST_ID_CONTEXT.get()
+        if request_id:
+            fields.append(f"requestId={request_id}")
+
+    for key, value in details.items():
+        if value is None or value == "":
+            continue
+
+        fields.append(f"{key}={format_value(value)}")
+
+    return f" {' '.join(fields)}" if fields else ""
+
+
+def log_request_start(message: str, **details: Any) -> None:
+    if not should_log_info():
+        return
+
+    print(
+        f"[{datetime.now(timezone.utc).isoformat()}] "
+        f"{message}{build_log_fields(details, include_request_id=True)}"
+    )
+
+
+def log_event(message: str, **details: Any) -> None:
+    if not should_log_info():
+        return
+
+    print(f"{TRACE_PREFIX}{message}{build_log_fields(details, include_request_id=True)}")
+
+
+def log_summary(message: str, **details: Any) -> None:
+    if not should_log_summary():
+        return
+
+    print(
+        f"[{datetime.now(timezone.utc).isoformat()}] "
+        f"{message}{build_log_fields(details, include_request_id=True)}"
+    )
+
+
+def summarise_request_payload(kwargs: dict[str, Any]) -> dict[str, Any]:
+    details: dict[str, Any] = {}
+
+    if "json" in kwargs:
+        details["body"] = kwargs["json"]
+
+    files = kwargs.get("files")
+    if isinstance(files, dict):
+        file_details: dict[str, Any] = {}
+        for field_name, file_value in files.items():
+            if isinstance(file_value, tuple):
+                filename = file_value[0] if len(file_value) > 0 else None
+                body = file_value[1] if len(file_value) > 1 else b""
+                content_type = file_value[2] if len(file_value) > 2 else None
+                file_details[field_name] = {
+                    "filename": filename,
+                    "bytes": len(body) if isinstance(body, bytes) else None,
+                    "contentType": content_type,
+                }
+
+        if file_details:
+            details["files"] = file_details
+
+    return details
+
+
+def summarise_response_payload(response: requests.Response) -> Any:
+    content_type = response.headers.get("Content-Type", "")
+    media_type = content_type.split(";", 1)[0].strip().lower()
+
+    if media_type == "application/json" or media_type.endswith("+json"):
+        try:
+            return response.json()
+        except ValueError:
+            return response.text.strip() or None
+
+    if media_type.startswith("text/"):
+        return response.text.strip() or None
+
+    return {
+        "contentType": content_type or None,
+        "bytes": len(response.content),
+    }
+
+
+configure_uvicorn_access_logging()
 
 
 class PipelineError(Exception):
@@ -84,6 +244,16 @@ def request_upstream(
     url: str,
     **kwargs: Any,
 ) -> requests.Response:
+    started_at = perf_counter()
+    log_event(
+        "outbound_api_request",
+        service=service,
+        state=state,
+        method=method,
+        url=url,
+        **summarise_request_payload(kwargs),
+    )
+
     try:
         response = requests.request(
             method=method,
@@ -92,6 +262,15 @@ def request_upstream(
             **kwargs,
         )
     except requests.RequestException as error:
+        log_event(
+            "outbound_api_response",
+            service=service,
+            state=state,
+            method=method,
+            url=url,
+            durationMs=round((perf_counter() - started_at) * 1000),
+            error=str(error),
+        )
         raise PipelineError(
             status_code=502,
             message=f"{service} could not be reached.",
@@ -101,14 +280,36 @@ def request_upstream(
         ) from error
 
     if response.status_code >= 400:
+        upstream_error = parse_upstream_error(response)
+        log_event(
+            "outbound_api_response",
+            service=service,
+            state=state,
+            method=method,
+            url=url,
+            status=response.status_code,
+            durationMs=round((perf_counter() - started_at) * 1000),
+            error=upstream_error,
+        )
         raise PipelineError(
             status_code=response.status_code,
             message=f"{service} returned an error.",
             service=service,
             state=state,
             upstream_status=response.status_code,
-            upstream_error=parse_upstream_error(response),
+            upstream_error=upstream_error,
         )
+
+    log_event(
+        "outbound_api_response",
+        service=service,
+        state=state,
+        method=method,
+        url=url,
+        status=response.status_code,
+        durationMs=round((perf_counter() - started_at) * 1000),
+        response=summarise_response_payload(response),
+    )
 
     return response
 
@@ -291,6 +492,57 @@ def run_pipeline(
         content=piper_response.content,
         media_type=piper_response.headers.get("Content-Type", "audio/wav"),
     )
+
+
+@app.middleware("http")
+async def log_http_request(request: Request, call_next: Any) -> Response:
+    request_id = str(uuid4())
+    started_at = perf_counter()
+    token = REQUEST_ID_CONTEXT.set(request_id)
+
+    log_request_start(
+        "incoming_request",
+        method=request.method,
+        path=request.url.path,
+        query=request.url.query or None,
+        contentType=request.headers.get("content-type"),
+        contentLength=request.headers.get("content-length"),
+    )
+
+    try:
+        response = await call_next(request)
+    except PipelineError as error:
+        log_event(
+            "request_complete",
+            method=request.method,
+            path=request.url.path,
+            status=error.status_code,
+            durationMs=round((perf_counter() - started_at) * 1000),
+            error=error.message,
+        )
+        REQUEST_ID_CONTEXT.reset(token)
+        raise
+    except Exception as error:
+        log_event(
+            "request_complete",
+            method=request.method,
+            path=request.url.path,
+            status=500,
+            durationMs=round((perf_counter() - started_at) * 1000),
+            error=str(error),
+        )
+        REQUEST_ID_CONTEXT.reset(token)
+        raise
+
+    log_event(
+        "request_complete",
+        method=request.method,
+        path=request.url.path,
+        status=response.status_code,
+        durationMs=round((perf_counter() - started_at) * 1000),
+    )
+    REQUEST_ID_CONTEXT.reset(token)
+    return response
 
 
 @app.exception_handler(PipelineError)
