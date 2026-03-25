@@ -11,7 +11,7 @@ import { errorHandler, logRequest, notFound } from "./middlewares";
 import router from "./router";
 
 const DEFAULT_PORT = 3000;
-const DEFAULT_API_VERSION = "v1";
+const DEFAULT_API_VERSION = "1";
 
 const rawPort = process.env.PORT ?? `${DEFAULT_PORT}`;
 const port = Number.parseInt(rawPort, 10);
