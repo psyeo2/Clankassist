@@ -16,16 +16,16 @@ const char *apiUrl = "https://assist.diakonos.uk/pipeline/raw?outputType=audio";
 
 constexpr uint32_t SAMPLE_RATE = 16000;
 constexpr uint8_t BITS_PER_SAMPLE = 16;
-constexpr size_t READ_CHUNK_SAMPLES = 320;
+constexpr size_t READ_CHUNK_FRAMES = 320;
+constexpr size_t INPUT_CHANNELS = 2;
 constexpr size_t MAX_RECORD_SECONDS_PSRAM = 20;
 constexpr size_t MAX_RECORD_SECONDS_NO_PSRAM = 3;
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
 constexpr uint32_t WIFI_STATUS_LOG_MS = 2000;
 constexpr int PLAYBACK_VOLUME = 90;
-constexpr es8311_mic_gain_t MIC_GAIN = ES8311_MIC_GAIN_36DB;
+constexpr es8311_mic_gain_t MIC_GAIN = ES8311_MIC_GAIN_18DB;
 constexpr int32_t TARGET_PEAK_AMPLITUDE = 12000;
 constexpr float MAX_NORMALIZE_GAIN = 12.0f;
-constexpr uint8_t ES7210_ADDR = 0x40;
 
 constexpr uint16_t COLOR_BG = RGB565_BLACK;
 constexpr uint16_t COLOR_PANEL = 0x10A2;
@@ -75,33 +75,6 @@ struct PcmStats {
   int32_t dcOffset = 0;
   uint32_t peakAbs = 0;
   uint32_t meanAbs = 0;
-};
-
-enum : uint8_t {
-  ES7210_RESET_REG00 = 0x00,
-  ES7210_CLOCK_OFF_REG01 = 0x01,
-  ES7210_MAINCLK_REG02 = 0x02,
-  ES7210_MASTER_CLK_REG03 = 0x03,
-  ES7210_LRCK_DIVH_REG04 = 0x04,
-  ES7210_LRCK_DIVL_REG05 = 0x05,
-  ES7210_POWER_DOWN_REG06 = 0x06,
-  ES7210_OSR_REG07 = 0x07,
-  ES7210_TIME_CONTROL0_REG09 = 0x09,
-  ES7210_TIME_CONTROL1_REG0A = 0x0A,
-  ES7210_SDP_INTERFACE1_REG11 = 0x11,
-  ES7210_ANALOG_REG40 = 0x40,
-  ES7210_MIC12_BIAS_REG41 = 0x41,
-  ES7210_MIC34_BIAS_REG42 = 0x42,
-  ES7210_MIC1_GAIN_REG43 = 0x43,
-  ES7210_MIC2_GAIN_REG44 = 0x44,
-  ES7210_MIC3_GAIN_REG45 = 0x45,
-  ES7210_MIC4_GAIN_REG46 = 0x46,
-  ES7210_MIC1_POWER_REG47 = 0x47,
-  ES7210_MIC2_POWER_REG48 = 0x48,
-  ES7210_MIC3_POWER_REG49 = 0x49,
-  ES7210_MIC4_POWER_REG4A = 0x4A,
-  ES7210_MIC12_POWER_REG4B = 0x4B,
-  ES7210_MIC34_POWER_REG4C = 0x4C,
 };
 
 void writePcmWavHeader(PcmWavHeader &header, uint32_t dataBytes);
@@ -300,73 +273,50 @@ float normalizePcm(int16_t *samples, size_t count) {
   return gain;
 }
 
-bool writeEs7210Reg(uint8_t reg, uint8_t value) {
-  Wire.beginTransmission(ES7210_ADDR);
-  Wire.write(reg);
-  Wire.write(value);
-  return Wire.endTransmission() == 0;
+bool configureMicrophoneRx() {
+  return i2s.configureRX(SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO, I2S_RX_TRANSFORM_NONE);
 }
 
-int readEs7210Reg(uint8_t reg) {
-  Wire.beginTransmission(ES7210_ADDR);
-  Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) {
-    return -1;
-  }
-  if (Wire.requestFrom((int)ES7210_ADDR, 1) != 1) {
-    return -1;
-  }
-  return Wire.read();
-}
-
-bool updateEs7210Reg(uint8_t reg, uint8_t mask, uint8_t value) {
-  int current = readEs7210Reg(reg);
-  if (current < 0) {
-    return false;
-  }
-  uint8_t next = (uint8_t(current) & ~mask) | (value & mask);
-  return writeEs7210Reg(reg, next);
-}
-
-bool initEs7210() {
-  Serial.println("Initializing ES7210 microphone ADC");
-
-  if (!writeEs7210Reg(ES7210_RESET_REG00, 0xFF) ||
-      !writeEs7210Reg(ES7210_RESET_REG00, 0x41) ||
-      !writeEs7210Reg(ES7210_CLOCK_OFF_REG01, 0x1F) ||
-      !writeEs7210Reg(ES7210_TIME_CONTROL0_REG09, 0x30) ||
-      !writeEs7210Reg(ES7210_TIME_CONTROL1_REG0A, 0x30) ||
-      !writeEs7210Reg(ES7210_ANALOG_REG40, 0xC3) ||
-      !writeEs7210Reg(ES7210_MIC12_BIAS_REG41, 0x70) ||
-      !writeEs7210Reg(ES7210_MIC34_BIAS_REG42, 0x70) ||
-      !writeEs7210Reg(ES7210_SDP_INTERFACE1_REG11, 0x60) ||
-      !writeEs7210Reg(ES7210_MAINCLK_REG02, 0xC1) ||
-      !writeEs7210Reg(ES7210_OSR_REG07, 0x20) ||
-      !writeEs7210Reg(ES7210_LRCK_DIVH_REG04, 0x01) ||
-      !writeEs7210Reg(ES7210_LRCK_DIVL_REG05, 0x00) ||
-      !writeEs7210Reg(ES7210_POWER_DOWN_REG06, 0x00) ||
-      !writeEs7210Reg(ES7210_MIC1_POWER_REG47, 0x00) ||
-      !writeEs7210Reg(ES7210_MIC2_POWER_REG48, 0x00) ||
-      !writeEs7210Reg(ES7210_MIC3_POWER_REG49, 0xFF) ||
-      !writeEs7210Reg(ES7210_MIC4_POWER_REG4A, 0xFF) ||
-      !writeEs7210Reg(ES7210_MIC12_POWER_REG4B, 0x00) ||
-      !writeEs7210Reg(ES7210_MIC34_POWER_REG4C, 0xFF) ||
-      !updateEs7210Reg(ES7210_CLOCK_OFF_REG01, 0x0B, 0x00) ||
-      !writeEs7210Reg(ES7210_MIC1_GAIN_REG43, 0x1D) ||
-      !writeEs7210Reg(ES7210_MIC2_GAIN_REG44, 0x1D) ||
-      !writeEs7210Reg(ES7210_MIC3_GAIN_REG45, 0x00) ||
-      !writeEs7210Reg(ES7210_MIC4_GAIN_REG46, 0x00)) {
-    Serial.println("ES7210 init failed");
+bool initEs8311Codec() {
+  codec = es8311_create(0, ES8311_ADDRRES_0);
+  if (codec == nullptr) {
     return false;
   }
 
-  int reg01 = readEs7210Reg(ES7210_CLOCK_OFF_REG01);
-  int reg11 = readEs7210Reg(ES7210_SDP_INTERFACE1_REG11);
-  int reg43 = readEs7210Reg(ES7210_MIC1_GAIN_REG43);
-  int reg44 = readEs7210Reg(ES7210_MIC2_GAIN_REG44);
-  Serial.printf("ES7210 regs: clock_off=0x%02X sdp=0x%02X mic1=0x%02X mic2=0x%02X\n",
-                reg01, reg11, reg43, reg44);
+  const es8311_clock_config_t clockConfig = {
+    .mclk_inverted = false,
+    .sclk_inverted = false,
+    .mclk_from_mclk_pin = true,
+    .mclk_frequency = SAMPLE_RATE * 256,
+    .sample_frequency = SAMPLE_RATE
+  };
+
+  if (es8311_init(codec, &clockConfig, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16) != ESP_OK) {
+    return false;
+  }
+  if (es8311_sample_frequency_config(codec, clockConfig.mclk_frequency, clockConfig.sample_frequency) != ESP_OK) {
+    return false;
+  }
+  if (es8311_microphone_config(codec, false) != ESP_OK) {
+    return false;
+  }
+  if (es8311_voice_volume_set(codec, PLAYBACK_VOLUME, nullptr) != ESP_OK) {
+    return false;
+  }
+  if (es8311_microphone_gain_set(codec, MIC_GAIN) != ESP_OK) {
+    return false;
+  }
+  if (es8311_voice_mute(codec, false) != ESP_OK) {
+    return false;
+  }
+
   return true;
+}
+
+int16_t chooseMicSample(int16_t left, int16_t right) {
+  int32_t absLeft = left < 0 ? -left : left;
+  int32_t absRight = right < 0 ? -right : right;
+  return absLeft >= absRight ? left : right;
 }
 
 String formatSeconds(uint32_t ms) {
@@ -683,52 +633,28 @@ bool initAudio() {
   digitalWrite(PA, HIGH);
 
   i2s.setTimeout(20);
-  // Speaker data goes out on GPIO8, microphone data comes in on GPIO10.
+  // Match the ES8311 example: start I2S with both slots active, then read the mic slot back as mono PCM.
   i2s.setPins(BCLKPIN, WSPIN, DIPIN, DOPIN, MCLKPIN);
-  if (!i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO, I2S_STD_SLOT_LEFT)) {
+  if (!i2s.begin(I2S_MODE_STD, SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO, I2S_STD_SLOT_BOTH)) {
     return false;
   }
 
-  if (!i2s.configureRX(SAMPLE_RATE, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_MONO, I2S_RX_TRANSFORM_NONE)) {
+  if (!configureMicrophoneRx()) {
     return false;
   }
 
-  codec = es8311_create(0, ES8311_ADDRRES_0);
-  if (codec == nullptr) {
-    return false;
-  }
-
-  const es8311_clock_config_t clockConfig = {
-    .mclk_inverted = false,
-    .sclk_inverted = false,
-    .mclk_from_mclk_pin = true,
-    .mclk_frequency = SAMPLE_RATE * 256,
-    .sample_frequency = SAMPLE_RATE
-  };
-
-  if (es8311_init(codec, &clockConfig, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16) != ESP_OK) {
-    return false;
-  }
-  if (es8311_sample_frequency_config(codec, clockConfig.mclk_frequency, clockConfig.sample_frequency) != ESP_OK) {
-    return false;
-  }
-  if (es8311_microphone_config(codec, false) != ESP_OK) {
-    return false;
-  }
-  if (es8311_microphone_gain_set(codec, MIC_GAIN) != ESP_OK) {
-    return false;
-  }
-  if (es8311_voice_volume_set(codec, PLAYBACK_VOLUME, nullptr) != ESP_OK) {
-    return false;
-  }
-  if (es8311_voice_mute(codec, false) != ESP_OK) {
-    return false;
-  }
-
-  return initEs7210();
+  return initEs8311Codec();
 }
 
 void beginRecording() {
+  if (!configureMicrophoneRx()) {
+    Serial.println("I2S RX reconfiguration failed");
+    errorMode = ErrorMode::RetryRecording;
+    setUiState(AssistantState::Error, "Audio Failed", "Could not enable microphone input");
+    renderUi(true);
+    return;
+  }
+
   recordedSamples = 0;
   recordStartedAt = millis();
   errorMode = ErrorMode::None;
@@ -955,9 +881,16 @@ void sampleMicrophone() {
     return;
   }
 
-  size_t samplesToRead = minSize(READ_CHUNK_SAMPLES, maxRecordSamples - recordedSamples);
-  size_t bytesRead = i2s.readBytes(reinterpret_cast<char *>(recordBuffer + recordedSamples), samplesToRead * sizeof(int16_t));
-  recordedSamples += bytesRead / sizeof(int16_t);
+  const size_t framesToRead = minSize(READ_CHUNK_FRAMES, maxRecordSamples - recordedSamples);
+  int16_t stereoFrames[READ_CHUNK_FRAMES * INPUT_CHANNELS];
+  size_t bytesRead = i2s.readBytes(reinterpret_cast<char *>(stereoFrames), framesToRead * INPUT_CHANNELS * sizeof(int16_t));
+  size_t framesRead = bytesRead / (INPUT_CHANNELS * sizeof(int16_t));
+
+  for (size_t i = 0; i < framesRead; ++i) {
+    recordBuffer[recordedSamples + i] = chooseMicSample(stereoFrames[i * INPUT_CHANNELS], stereoFrames[i * INPUT_CHANNELS + 1]);
+  }
+
+  recordedSamples += framesRead;
 }
 
 void handleStateTransitions() {
