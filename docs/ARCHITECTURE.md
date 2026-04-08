@@ -2,37 +2,48 @@
 
 ## Overview
 
-Diakonos-Assist is currently organised around a lightweight orchestration service and a small number of specialised upstream services.
+Diakonos-Assist is moving toward a split between a user-facing orchestrator and a dedicated MCP tool server.
 
-The practical architecture is:
+The target architecture is:
 
-- `whisper-api` handles speech-to-text
+- `orchestrator` handles audio/text intake, planning, response shaping, and voice-pipeline coordination
+- `mcp-server` exposes tools, validates tool calls, executes integrations, and returns structured results
+- `postgres` stores tool metadata, versions, and publication state
 - `ollama` handles planning / LLM inference
-- `process-api` handles orchestration, validation, execution, and response shaping
-- `pipeline-server` handles audio-in, audio-out voice orchestration
+- `whisper-api` handles speech-to-text
 - `piper-api` handles text-to-speech using Piper's built-in HTTP server and a baked-in local voice model
 - internal homelab services provide the actual functionality
 
-The important point is that `process-api` is the coordinator, not the heavy AI runtime.
+The important point is that the orchestrator coordinates the user workflow, while the MCP server owns tool execution.
 
 ## High-Level Flow
 
 ```mermaid
 flowchart LR
 
-audio[Audio Input] --> pipeline[pipeline-server]
-pipeline -->|audio file| whisper[whisper-api]
-whisper -->|transcript| pipeline
-pipeline -->|transcript| process[process-api]
-process -->|tool planning prompt| ollama[oLLaMa]
-ollama -->|tool + args + response| process
-process -->|HTTP/tool execution| services[Internal Services]
-services -->|results| process
-process -->|speech text| pipeline
-pipeline -->|speech text| piper[piper-api]
-piper -->|WAV audio| pipeline
-pipeline -->|WAV audio| speaker[Playback / Speaker]
-process -->|JSON data| caller[Client / Voice Layer]
+audio[Audio Input] --> orchestrator[orchestrator]
+text[Text Input] --> orchestrator
+
+orchestrator -->|audio file| whisper[whisper-api]
+whisper -->|transcript| orchestrator
+
+orchestrator -->|tool planning prompt| ollama[oLLaMa]
+ollama -->|tool + args + response draft| orchestrator
+
+orchestrator -->|tool call| mcp[MCP Server]
+mcp -->|structured tool result| orchestrator
+
+orchestrator -->|speech text| piper[piper-api]
+piper -->|WAV audio| orchestrator
+orchestrator -->|WAV audio| speaker[Playback / Speaker]
+
+mcp -->|tool metadata| postgres[(Postgres)]
+postgres -->|published tools| mcp
+
+mcp -->|HTTP/tool execution| services[Internal Services]
+services -->|results| mcp
+
+orchestrator -->|JSON data| caller[Client / Voice Layer]
 ```
 
 ## Deployment Split
@@ -43,12 +54,14 @@ flowchart LR
 subgraph GPUHost["GPU Machine"]
   whisper[whisper-api]
   ollama[oLLaMa]
-  piper[piper-api]
 end
 
-subgraph Anywhere["Any Network-Reachable Machine"]
-  pipeline[pipeline-server]
-  process[process-api]
+subgraph AppHost["Kubernetes Cluster"]
+  orchestrator[orchestrator]
+  mcp[MCP Server]
+  piper[piper-api]
+  postgres[(Postgres)]
+  admin[Admin GUI]
 end
 
 subgraph Services["Internal Services"]
@@ -57,152 +70,224 @@ subgraph Services["Internal Services"]
   future[Future Services]
 end
 
-pipeline --> whisper
-whisper --> pipeline
-pipeline --> process
-process --> ollama
-process --> pipeline
-pipeline --> piper
-process --> gpu
-process --> jelly
-process --> future
+orchestrator --> whisper
+whisper --> orchestrator
+orchestrator --> ollama
+orchestrator --> mcp
+mcp --> postgres
+postgres --> mcp
+orchestrator --> piper
+mcp --> gpu
+mcp --> jelly
+mcp --> future
+admin --> postgres
 ```
 
 ### Why this split
 
 `ollama/` and `whisper-api/` should live on a GPU machine because they are inference-heavy.
 
-`piper-api/` is lighter and can run on CPU, but keeping it on the same AI host usually makes the voice path simpler:
+`piper-api/` is lighter and can run on CPU, but keeping it on the same AI host usually keeps the voice path simpler:
 
 - STT in
-- planning/execution in the middle
+- planning and tool selection in the middle
 - TTS out
 
-In the current setup, `piper-api/` is intentionally simple:
-
-- no custom FastAPI wrapper
-- no dependency on `piper1-gpl/`
-- no required environment variables
-- default voice baked into the image from `piper-api/cori-high/`
-
-`process-api/` can run almost anywhere because it mainly does:
-
-- HTTP handling
-- tool validation
-- tool execution dispatch
-- response formatting
-- logging
-
-`pipeline-server/` can also run almost anywhere because it mainly does:
+The orchestrator can run almost anywhere because it mainly does:
 
 - request intake
+- speech and text routing
 - upstream HTTP calls
+- planner coordination
 - failure forwarding
+- response shaping
 - binary audio response handling
 
-## `process-api` Internals
+The MCP server can also run almost anywhere because it mainly does:
 
-`pipeline-server` sits in front of `process-api` for device-facing audio flows.
+- tool discovery
+- tool validation
+- tool execution dispatch
+- integration calls
+- result shaping
+
+Folding `pipeline-server` into the orchestrator is reasonable because its responsibilities were already orchestration concerns rather than a distinct business domain.
+
+## Orchestrator Responsibilities
+
+The orchestrator replaces the old split between `pipeline-server` and `process-api`.
 
 Its job is:
 
-- receive the uploaded audio file
-- call `whisper-api`
-- call `process-api`
-- call `piper-api`
-- return the generated WAV file
+- receive text requests
+- receive uploaded or raw audio
+- call `whisper-api` when transcription is needed
+- call `ollama` to choose a tool and draft a short response
+- call the MCP server to execute the selected tool
+- call `piper-api` when audio output is required
+- return either JSON, plain text, or generated WAV audio
 - surface failure context with service and state metadata
 
 ### Request modes
 
-`POST /api/v1/process` has two modes:
+The orchestrator should support at least three modes:
 
-1. speech mode
-2. direct mode
+1. text planning mode
+2. direct tool mode
+3. audio pipeline mode
 
-Speech mode:
+Text planning mode:
 
 - input: `{ "speech": "..." }`
-- sends available tools to oLLaMa
+- sends available tools to `ollama`
 - receives a selected tool and args
-- executes the selected tool
+- calls the MCP server with that tool selection
+- returns structured JSON plus a voice-friendly response string
 
-Direct mode:
+Direct tool mode:
 
 - input: `{ "tool": "...", "args": {} }`
-- skips oLLaMa entirely
-- executes the tool immediately
+- skips `ollama` entirely
+- calls the MCP server directly
+- returns deterministic execution results
 
-This makes direct mode useful for deterministic testing.
+Audio pipeline mode:
+
+- input: audio bytes or multipart upload
+- sends audio to `whisper-api`
+- plans from the transcript
+- executes through the MCP server
+- optionally synthesises the response through `piper-api`
+
+This keeps direct mode useful for deterministic testing while giving one service ownership of the full voice path.
 
 ### Internal layers
 
 ```mermaid
 flowchart TD
 
-request[HTTP Request] --> controller[process controller]
-controller --> planner[oLLaMa planner step]
-planner --> registry[tool registry]
-registry --> validation[tool validation]
-validation --> executors[tool executors]
+request[HTTP Request] --> intake[request intake]
+intake --> speech{Audio input?}
+speech -->|yes| whisper[whisper-api]
+whisper --> planner[planner step]
+speech -->|no| planner
+
+planner --> ollama[oLLaMa]
+ollama --> selection[tool selection]
+selection --> mcp[MCP Server]
+mcp --> result[tool result]
+result --> response[response shaping]
+response --> tts{Audio output?}
+tts -->|yes| piper[piper-api]
+piper --> final[HTTP response]
+tts -->|no| final
+```
+
+## MCP Server Responsibilities
+
+The MCP server is the tool execution boundary.
+
+Its job is:
+
+- expose planner-visible tools
+- validate tool call arguments
+- execute the correct integration
+- return structured results
+- hide unpublished or invalid tools
+- keep execution code separate from planner logic
+
+Conceptually, the orchestrator answers "what should be called?" and the MCP server answers "how is that tool actually run?"
+
+### Internal layers
+
+```mermaid
+flowchart TD
+
+call[Tool Call] --> catalog[published tool catalog]
+catalog --> validation[tool validation]
+validation --> executors[executor bindings]
 executors --> integrations[integration clients]
 integrations --> services[real services]
 services --> integrations
 integrations --> executors
-executors --> controller
-controller --> response[JSON response]
+executors --> output[structured tool result]
 ```
 
-## Tool System
+## Tool Metadata And Postgres
 
-The tool system is intentionally split into three distinct concerns.
+Tool metadata should move to Postgres, but executor implementations should remain in version-controlled source.
 
-### 1. Tool definitions
+This is an important distinction:
 
-Location:
+- Postgres owns metadata
+- source code owns execution
 
-- `process-api/src/tools/definitions/`
+The system should not allow arbitrary executable logic to be defined in the database.
 
-Purpose:
+### What belongs in Postgres
 
-- define what the LLM is allowed to choose
-- describe arguments and intent at a high level
+Store:
 
-### 2. Tool registry
+- tool name
+- description
+- integration key
+- argument schema JSON
+- execution summary
+- enabled or disabled state
+- planner visibility
+- metadata version
+- draft or published state
+- human notes
 
-Location:
+### What stays in source code
 
-- `process-api/src/tools/registry.ts`
+Keep:
 
-Purpose:
+- executor implementations
+- integration clients
+- validation helpers
+- hard safety checks
+- allow-list of executable integration keys
 
-- gather definitions into one catalogue
-- expose planner-visible tools
-- filter tools based on runtime availability
-- provide lookup by tool name
+### Suggested entities
 
-### 3. Tool executors
+A minimal schema should include:
 
-Location:
+- `integrations`
+- `tools`
+- `tool_versions`
+- `tool_publish_events`
 
-- `process-api/src/tools/executors.ts`
+The important operational rule is that only published and validated tool metadata should be exposed by the MCP server.
 
-Purpose:
+## Admin GUI
 
-- take a validated tool selection
-- call the correct integration
-- shape the result
-- generate a short `speech` string
+An admin GUI becomes useful once tool metadata lives in Postgres.
+
+It should support:
+
+- creating tool drafts
+- editing descriptions and schemas
+- toggling planner visibility
+- previewing planner-facing tool JSON
+- validating metadata against known executor bindings
+- publishing and rolling back metadata versions
+
+The GUI should never:
+
+- upload executable code
+- define arbitrary executor logic
+- bypass integration allow-lists
+
+That keeps the system flexible without turning it into remote code execution.
 
 ## Integration Layer
 
-Location:
-
-- `process-api/src/integrations/`
+Integration clients belong behind the MCP server.
 
 Purpose:
 
-- contain the real request/response logic for upstream services
+- contain the real request and response logic for upstream services
 - isolate auth, base URLs, HTTP request shapes, and parsing
 
 Current integrations:
@@ -214,49 +299,58 @@ This layer is where service-specific code belongs. It is not where tool selectio
 
 ## Unsupported Requests
 
-Unsupported requests are handled explicitly via:
+Unsupported requests should still be handled explicitly.
 
-- `system.unsupported_request`
-
-The planner should choose this when the user asks for something outside the supported tool set.
+The planner should choose an explicit unsupported path when the user asks for something outside the published tool set.
 
 This avoids forcing random requests into the closest available tool.
 
 ## Logging Model
 
-Logging is request-scoped and controlled by `LOG_LEVEL`.
+Logging should stay request-scoped and split by responsibility.
 
-Supported levels:
+At the orchestrator layer, log:
 
-- `INFO`
-- `SUMMARY`
-- `NONE`
-
-At `INFO`, the API logs:
-
-- the incoming request
-- outbound API calls
+- incoming request
+- transcription step
 - planner selection
-- the final request summary
+- MCP calls
+- TTS calls
+- final request summary
 
-At `SUMMARY`, only the final per-request line is logged.
+At the MCP layer, log:
 
-## What Is Not In This Service
+- tool discovery or publication state used for the request
+- incoming tool call
+- validation failures
+- outbound integration calls
+- final execution summary
 
-`process-api` does not currently do:
+## What Is Not In Postgres
 
-- raw audio ingestion
-- speech-to-text
-- text-to-speech
-- conversation memory
-- clarification dialogues
-- dynamic tool registration from a database
+Postgres should not store:
 
-Those are either handled elsewhere or are future work.
+- executable code
+- auth tokens
+- service URLs
+- machine-specific settings
 
-## Future Direction
+Those belong in source control or deployment configuration, depending on the type of data.
 
-The biggest architectural upgrade under consideration is moving tool registration from code to a database-backed registry with a deterministic publishing flow.
+## Migration Direction
+
+The safest migration path is:
+
+1. keep executor code where it is
+2. extract tool discovery and execution behind an MCP server
+3. move only tool metadata into Postgres
+4. add strict validation between published metadata and executor bindings
+5. add an admin GUI for draft, validate, publish, and rollback workflows
+6. fold `pipeline-server` into the orchestrator and retire the split audio path
+
+This gives a cleaner long-term architecture without making the runtime path less deterministic.
+
+## Related Documents
 
 See:
 
