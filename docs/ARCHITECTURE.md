@@ -9,7 +9,7 @@ The target architecture is:
 - `orchestrator` handles audio/text intake, planning, response shaping, and voice-pipeline coordination
 - `mcp-server` exposes tools, validates tool calls, executes a generic integration skeleton, and returns structured results
 - `postgres` stores tool metadata, integration definitions, execution specs, versions, and publication state
-- `ollama` handles planning / LLM inference
+- an external OpenAI-compatible LLM API handles planning / LLM inference
 - `whisper-api` handles speech-to-text
 - `piper-api` handles text-to-speech using Piper's built-in HTTP server and a baked-in local voice model
 - internal homelab services provide the actual functionality
@@ -31,8 +31,8 @@ text[Text Input] --> orchestrator
 orchestrator -->|audio file| whisper[whisper-api]
 whisper -->|transcript| orchestrator
 
-orchestrator -->|tool planning prompt| ollama[oLLaMa]
-ollama -->|tool + args + response draft| orchestrator
+orchestrator -->|tool planning prompt| llm[OpenAI-Compatible LLM API]
+llm -->|tool + args + response draft| orchestrator
 
 orchestrator -->|tool call| mcp[MCP Server]
 mcp -->|structured tool result| orchestrator
@@ -55,9 +55,9 @@ orchestrator -->|JSON data| caller[Client / Voice Layer]
 ```mermaid
 flowchart LR
 
-subgraph GPUHost["GPU Machine"]
+subgraph ExternalAI["External / User-Managed AI Services"]
   whisper[whisper-api]
-  ollama[oLLaMa]
+  llm[OpenAI-Compatible LLM API]
 end
 
 subgraph AppHost["Kubernetes Cluster / Single App Container"]
@@ -76,7 +76,7 @@ end
 
 orchestrator --> whisper
 whisper --> orchestrator
-orchestrator --> ollama
+orchestrator --> llm
 orchestrator -->|stdio subprocess| mcp
 mcp --> postgres
 postgres --> mcp
@@ -89,7 +89,15 @@ admin --> postgres
 
 ### Why this split
 
-`ollama/` and `whisper-api/` should live on a GPU machine because they are inference-heavy.
+`whisper-api/` typically lives on a GPU machine because it is inference-heavy.
+
+The LLM endpoint is intentionally treated as external and user-managed. The orchestrator only needs an OpenAI-compatible base URL, model name, and optional API key. That endpoint might be:
+
+- a home oLLaMa instance
+- OpenAI
+- OpenRouter
+- vLLM
+- another OpenAI-compatible provider
 
 `piper-api/` is lighter and can run on CPU, but keeping it on the same AI host usually keeps the voice path simpler:
 
@@ -129,7 +137,7 @@ Its job is:
 - receive text requests
 - receive uploaded or raw audio
 - call `whisper-api` when transcription is needed
-- call `ollama` to choose a tool and draft a short response
+- call the configured LLM API to choose a tool and draft a short response
 - call the MCP server to execute the selected tool
 - call `piper-api` when audio output is required
 - return either JSON, plain text, or generated WAV audio
@@ -146,7 +154,7 @@ The orchestrator should support at least three modes:
 Text planning mode:
 
 - input: `{ "speech": "..." }`
-- sends available tools to `ollama`
+- sends available tools to the configured LLM API
 - receives a selected tool and args
 - calls the MCP server with that tool selection
 - returns structured JSON plus a voice-friendly response string
@@ -154,7 +162,7 @@ Text planning mode:
 Direct tool mode:
 
 - input: `{ "tool": "...", "args": {} }`
-- skips `ollama` entirely
+- skips the LLM entirely
 - calls the MCP server directly
 - returns deterministic execution results
 
@@ -179,8 +187,8 @@ speech -->|yes| whisper[whisper-api]
 whisper --> planner[planner step]
 speech -->|no| planner
 
-planner --> ollama[oLLaMa]
-ollama --> selection[tool selection]
+planner --> llm[OpenAI-Compatible LLM API]
+llm --> selection[tool selection]
 selection --> mcpProc[MCP subprocess launch / reuse]
 mcpProc --> mcp[MCP Server]
 mcp --> result[tool result]
@@ -398,3 +406,4 @@ This gives a cleaner long-term architecture without making the runtime path less
 See:
 
 - [Tool Registry Future](./TOOL-REGISTRY-FUTURE.md)
+- [Auth And Discovery](./AUTH-AND-DISCOVERY.md)

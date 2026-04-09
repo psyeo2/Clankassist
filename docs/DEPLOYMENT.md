@@ -4,20 +4,20 @@
 
 The current recommended deployment split is:
 
-### GPU machine
+### AI / service host
 
 Copy and run:
 
-- `ollama/`
 - `whisper-api/`
 - `piper-api/`
 
-These are the voice and model-serving parts of the stack.
+These are the voice-serving parts of the stack.
 
 Important distinction:
 
-- `ollama/` and `whisper-api/` are the components that most clearly need the GPU
+- `whisper-api/` is the component that most clearly needs the GPU
 - `piper-api/` can run on CPU, but it usually belongs on the same AI host for operational simplicity
+- the LLM endpoint is external and user-managed, as long as it exposes an OpenAI-compatible API
 
 `piper-api/` is designed to be copied and run on its own, similar to `whisper-api/`. It does not depend on a vendored Piper source tree being present beside it.
 
@@ -33,42 +33,43 @@ The current `piper-api/` setup is intentionally minimal:
 
 Run:
 
-- `pipeline-server/`
-- `process-api/`
+- `orchestrator/`
+- `mcp-server/` is started by the orchestrator as a local subprocess
+- `postgres/`
 
 These services can run on almost any machine that has network access to:
 
-- the oLLaMa host
+- the configured LLM endpoint
 - `whisper-api`
 - `piper-api`
 - the services it integrates with
 - any caller that needs to reach it
 
-## Why `process-api` Does Not Need To Be On The GPU Host
+## Why The Orchestrator Does Not Need To Be On The AI Host
 
-`process-api` mainly performs:
+`orchestrator` mainly performs:
 
 - input validation
-- prompt assembly
-- tool selection handoff
-- executor dispatch
+- prompt assembly and planner calls
+- MCP client calls
 - service orchestration
 - logging
+- auth and admin API handling
 
-`pipeline-server` mainly performs:
+`mcp-server` mainly performs:
 
-- audio upload handling
-- upstream HTTP orchestration
-- response piping
-- failure forwarding
+- tool discovery
+- validation
+- declarative HTTP execution
+- result shaping
 
 That work is light compared with STT and LLM inference.
 
 ## Example Layout
 
-### Machine A: GPU host
+### Machine A: AI / service host
 
-- oLLaMa on port `11434`
+- external or self-hosted OpenAI-compatible LLM endpoint
 - whisper-api on port `8001`
 - piper-api on port `8002`
 
@@ -78,8 +79,9 @@ In the current repo state, `piper-api` serves the baked-in model at:
 
 ### Machine B: orchestration host
 
-- pipeline-server on port `8003`
-- process-api on port `3001`
+- orchestrator on port `3000`
+- local mcp-server subprocess
+- postgres
 
 ### Internal service hosts
 
@@ -89,16 +91,17 @@ In the current repo state, `piper-api` serves the baked-in model at:
 
 ## Minimum Networking Requirements
 
-`process-api` must be able to reach:
+`orchestrator` must be able to reach:
 
-- `OLLAMA_URL`
-- each configured integration endpoint
-
-`pipeline-server` must be able to reach:
-
+- `LLM_URL`
 - `WHISPER_URL`
-- `PROCESS_URL`
 - `PIPER_URL`
+- postgres
+- the local `mcp-server` subprocess
+
+`mcp-server` must be able to reach:
+
+- each configured integration endpoint
 
 If your wider system uses `whisper-api`, the caller or upstream layer must also be able to reach that service.
 
@@ -106,19 +109,28 @@ If you use `piper-api` for playback, the caller or downstream voice layer must a
 
 ## Environment Configuration
 
-At minimum, `process-api` needs:
+At minimum, `orchestrator` needs:
 
 - `PORT`
 - `API_VERSION`
 - `LOG_LEVEL`
-- `OLLAMA_URL`
-- `OLLAMA_MODEL`
+- `MCP_SERVER_SCRIPT`
+- `LLM_URL`
+- `LLM_KEY`
+- `LLM_MODEL`
+- `WHISPER_URL`
+- `PIPER_URL`
+- `PG_HOST`
+- `PG_PORT`
+- `PG_USER`
+- `PG_PASSWORD`
+- `PG_DB`
 
 Integration-specific variables are only needed for the services you actually want enabled.
 
 ## Operational Advice
 
-- keep `process-api` separate from the GPU host if you want cleaner failure isolation
+- keep the orchestrator separate from the AI host if you want cleaner failure isolation
 - keep `LOG_LEVEL=SUMMARY` or `LOG_LEVEL=INFO` in development
 - use `LOG_LEVEL=NONE` only if you have another observability path
 - treat optional integrations as optional at deployment time
