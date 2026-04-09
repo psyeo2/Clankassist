@@ -1,0 +1,80 @@
+import http from "node:http";
+
+import cors from "cors";
+import dotenv from "dotenv";
+import express, { type ErrorRequestHandler, type RequestHandler } from "express";
+
+import { createRouter } from "./router.js";
+import { mcpClient } from "./services/mcpClient.js";
+import { handleResponse } from "./utils/response.js";
+
+dotenv.config();
+
+const DEFAULT_PORT = 3000;
+const DEFAULT_API_VERSION = "1";
+
+const rawPort = process.env.PORT ?? `${DEFAULT_PORT}`;
+const port = Number.parseInt(rawPort, 10);
+
+if (Number.isNaN(port)) {
+  throw new Error(`PORT must be a valid number. Received "${rawPort}".`);
+}
+
+const apiVersion = (process.env.API_VERSION ?? DEFAULT_API_VERSION).trim() || DEFAULT_API_VERSION;
+const apiPrefix = `/api/v${apiVersion}`;
+
+const app = express();
+app.disable("x-powered-by");
+app.use(cors());
+app.use(express.json());
+
+const notFound: RequestHandler = (request, response): void => {
+  handleResponse(response, 404, "Route not found", {
+    path: request.originalUrl,
+  });
+};
+
+const errorHandler: ErrorRequestHandler = (error, _request, response, next): void => {
+  if (response.headersSent) {
+    next(error);
+    return;
+  }
+
+  const message = error instanceof Error ? error.message : "Internal Server Error";
+  handleResponse(response, 500, message, null);
+};
+
+app.use(apiPrefix, createRouter());
+app.use(notFound);
+app.use(errorHandler);
+
+const server = http.createServer(app);
+
+const closeGracefully = async (): Promise<void> => {
+  server.close(async () => {
+    await mcpClient.close();
+    process.exit(0);
+  });
+};
+
+process.on("SIGINT", () => {
+  void closeGracefully();
+});
+
+process.on("SIGTERM", () => {
+  void closeGracefully();
+});
+
+async function main(): Promise<void> {
+  await mcpClient.connect();
+
+  server.listen(port, () => {
+    console.log(`Orchestrator is running on http://localhost:${port}${apiPrefix}`);
+  });
+}
+
+main().catch(async (error: unknown) => {
+  console.error("Fatal error in orchestrator:", error);
+  await mcpClient.close();
+  process.exit(1);
+});
