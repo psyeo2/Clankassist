@@ -8,7 +8,7 @@ export type JsonResponsePayload<T = unknown> = {
 
 type ResponseMeta = {
   bytes: number;
-  kind: "json" | "binary";
+  kind: "json" | "binary" | "text";
   message: string;
   payload?: Record<string, unknown>;
 };
@@ -59,5 +59,27 @@ export const handleBinaryResponse = (
   });
 
   response.setHeader("Content-Type", options.contentType);
+  response.status(status).send(body);
+};
+
+export const handleTextResponse = (
+  response: Response,
+  status: number,
+  body: string,
+  options: {
+    contentType?: string;
+    message?: string;
+  } = {},
+): void => {
+  const contentType = options.contentType ?? "text/plain; charset=utf-8";
+  const message = options.message ?? "Text response";
+
+  setResponseMeta(response, {
+    bytes: Buffer.byteLength(body),
+    kind: "text",
+    message,
+  });
+
+  response.setHeader("Content-Type", contentType);
   response.status(status).send(body);
 };

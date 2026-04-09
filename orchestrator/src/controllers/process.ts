@@ -1,6 +1,9 @@
 import type { RequestHandler } from "express";
 
+import { extractToolText } from "../helpers/toolResult.js";
 import { mcpClient } from "../services/mcpClient.js";
+import { planToolSelection } from "../services/ollama.js";
+import { HttpError } from "../utils/errors.js";
 import { handleResponse } from "../utils/response.js";
 
 type DirectToolBody = {
@@ -40,9 +43,26 @@ export const processRequest: RequestHandler = async (request, response): Promise
   const body = isRecord(request.body) ? (request.body as DirectToolBody) : {};
 
   if (typeof body.speech === "string" && body.speech.trim() !== "") {
-    handleResponse(response, 501, "Planner integration not implemented yet", {
-      speech: body.speech,
-      nextStep: "Wire oLLaMa or another planner into the orchestrator before enabling speech mode.",
+    const speech = body.speech.trim();
+    const plan = await planToolSelection(speech);
+
+    if (plan.tool.trim() === "" || plan.tool === "system.unsupported_request") {
+      throw new HttpError(422, "No supported task identified.", {
+        speech,
+        response: plan.response,
+      });
+    }
+
+    const result = await mcpClient.callTool(plan.tool, plan.args);
+
+    handleResponse(response, 200, "Tool executed", {
+      speech,
+      selection: {
+        tool: plan.tool,
+        args: plan.args,
+      },
+      response: extractToolText(result) || plan.response,
+      result,
     });
     return;
   }

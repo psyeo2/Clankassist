@@ -6,6 +6,7 @@ import express from "express";
 
 import { errorHandler, logRequest, notFound } from "./middlewares/index.js";
 import { createRouter } from "./routes/index.js";
+import { handleListenUpgrade } from "./services/listenSocket.js";
 import { mcpClient } from "./services/mcpClient.js";
 import { logStartup } from "./utils/logger.js";
 
@@ -35,6 +36,13 @@ app.use(notFound);
 app.use(errorHandler);
 
 const server = http.createServer(app);
+server.on("upgrade", (request, socket) => {
+  void handleListenUpgrade(request, socket, `${apiPrefix}/listen`).then((handled) => {
+    if (!handled) {
+      socket.destroy();
+    }
+  });
+});
 
 const closeGracefully = async (): Promise<void> => {
   server.close(async () => {
