@@ -7,14 +7,18 @@ Diakonos-Assist is moving toward a split between a user-facing orchestrator and 
 The target architecture is:
 
 - `orchestrator` handles audio/text intake, planning, response shaping, and voice-pipeline coordination
-- `mcp-server` exposes tools, validates tool calls, executes integrations, and returns structured results
-- `postgres` stores tool metadata, versions, and publication state
+- `mcp-server` exposes tools, validates tool calls, executes a generic integration skeleton, and returns structured results
+- `postgres` stores tool metadata, integration definitions, execution specs, versions, and publication state
 - `ollama` handles planning / LLM inference
 - `whisper-api` handles speech-to-text
 - `piper-api` handles text-to-speech using Piper's built-in HTTP server and a baked-in local voice model
 - internal homelab services provide the actual functionality
 
 The important point is that the orchestrator coordinates the user workflow, while the MCP server owns tool execution.
+
+In the chosen deployment model, the orchestrator starts the MCP server as a local subprocess and communicates with it over stdio. This keeps the distribution model simple while preserving a clear logical split between orchestration and tool execution.
+
+The MCP server is intentionally generic. Service-specific client modules such as `integrations/gpuStatus/client.ts` are not part of the target design. Instead, Postgres defines integrations, request shapes, response extraction rules, and published tool metadata, while the MCP server provides a constrained execution engine that can interpret those definitions safely.
 
 ## High-Level Flow
 
@@ -56,7 +60,7 @@ subgraph GPUHost["GPU Machine"]
   ollama[oLLaMa]
 end
 
-subgraph AppHost["Kubernetes Cluster"]
+subgraph AppHost["Kubernetes Cluster / Single App Container"]
   orchestrator[orchestrator]
   mcp[MCP Server]
   piper[piper-api]
@@ -73,7 +77,7 @@ end
 orchestrator --> whisper
 whisper --> orchestrator
 orchestrator --> ollama
-orchestrator --> mcp
+orchestrator -->|stdio subprocess| mcp
 mcp --> postgres
 postgres --> mcp
 orchestrator --> piper
@@ -98,6 +102,7 @@ The orchestrator can run almost anywhere because it mainly does:
 - request intake
 - speech and text routing
 - upstream HTTP calls
+- subprocess lifecycle for the local MCP server
 - planner coordination
 - failure forwarding
 - response shaping
@@ -107,9 +112,11 @@ The MCP server can also run almost anywhere because it mainly does:
 
 - tool discovery
 - tool validation
-- tool execution dispatch
-- integration calls
+- generic execution dispatch
+- integration calls based on declarative specs
 - result shaping
+
+When the orchestrator and MCP server are packaged together, the MCP server does not need its own network API. The orchestrator owns the public HTTP surface and treats the MCP server as an internal child process.
 
 Folding `pipeline-server` into the orchestrator is reasonable because its responsibilities were already orchestration concerns rather than a distinct business domain.
 
@@ -174,7 +181,8 @@ speech -->|no| planner
 
 planner --> ollama[oLLaMa]
 ollama --> selection[tool selection]
-selection --> mcp[MCP Server]
+selection --> mcpProc[MCP subprocess launch / reuse]
+mcpProc --> mcp[MCP Server]
 mcp --> result[tool result]
 result --> response[response shaping]
 response --> tts{Audio output?}
@@ -191,7 +199,7 @@ Its job is:
 
 - expose planner-visible tools
 - validate tool call arguments
-- execute the correct integration
+- execute the correct declarative integration spec
 - return structured results
 - hide unpublished or invalid tools
 - keep execution code separate from planner logic
@@ -205,34 +213,37 @@ flowchart TD
 
 call[Tool Call] --> catalog[published tool catalog]
 catalog --> validation[tool validation]
-validation --> executors[executor bindings]
-executors --> integrations[integration clients]
-integrations --> services[real services]
-services --> integrations
-integrations --> executors
-executors --> output[structured tool result]
+validation --> spec[execution spec]
+spec --> engine[generic execution engine]
+engine --> services[real services]
+services --> engine
+engine --> output[structured tool result]
 ```
 
 ## Tool Metadata And Postgres
 
-Tool metadata should move to Postgres, but executor implementations should remain in version-controlled source.
+Tool metadata and declarative execution specs should move to Postgres, but the execution engine and hard safety rules should remain in version-controlled source.
 
 This is an important distinction:
 
-- Postgres owns metadata
-- source code owns execution
+- Postgres owns metadata and execution specs
+- source code owns the execution engine and safety boundaries
 
-The system should not allow arbitrary executable logic to be defined in the database.
+The system should not allow arbitrary executable logic to be defined in the database. The database may describe requests and extraction rules, but it should not store free-form code.
 
 ### What belongs in Postgres
 
 Store:
 
+- integration transport type
+- integration base URL env-var reference
+- integration auth strategy and env-var reference
 - tool name
 - description
 - integration key
 - argument schema JSON
 - execution summary
+- execution spec JSON
 - enabled or disabled state
 - planner visibility
 - metadata version
@@ -243,11 +254,11 @@ Store:
 
 Keep:
 
-- executor implementations
-- integration clients
+- generic execution engine
+- supported extractor and transformer types
 - validation helpers
 - hard safety checks
-- allow-list of executable integration keys
+- allow-list of supported protocols, auth modes, and extraction modes
 
 ### Suggested entities
 
@@ -257,8 +268,35 @@ A minimal schema should include:
 - `tools`
 - `tool_versions`
 - `tool_publish_events`
+- `resources`
+- `resource_versions`
+- `resource_publish_events`
 
 The important operational rule is that only published and validated tool metadata should be exposed by the MCP server.
+
+### Declarative execution model
+
+The runtime model is intentionally declarative.
+
+For each published tool version, Postgres should be able to describe:
+
+- how the request is built
+- which integration it targets
+- which HTTP method and path are used
+- how args map into path, query, headers, or body
+- which response shape is expected
+- how structured output is extracted
+- how user-facing text is shaped
+
+This means the MCP server should provide a fixed set of supported execution and extraction modes, for example:
+
+- HTTP request execution
+- JSON field extraction
+- text extraction
+- Prometheus metric extraction
+- simple templated result shaping
+
+The MCP server should not evaluate arbitrary scripts from the database.
 
 ## Admin GUI
 
@@ -276,26 +314,31 @@ It should support:
 The GUI should never:
 
 - upload executable code
-- define arbitrary executor logic
+- define arbitrary executable logic
 - bypass integration allow-lists
 
 That keeps the system flexible without turning it into remote code execution.
+
+The admin HTTP API for creating, editing, publishing, rolling back, and deleting tool or resource metadata can reasonably live in the orchestrator because the orchestrator already owns the public API surface. The MCP server should remain read-only with respect to published metadata during normal runtime.
 
 ## Integration Layer
 
 Integration clients belong behind the MCP server.
 
+In the target model, "integration layer" means declarative integration definitions plus a generic runtime engine, not handwritten per-service client modules.
+
 Purpose:
 
-- contain the real request and response logic for upstream services
-- isolate auth, base URLs, HTTP request shapes, and parsing
+- define how upstream services are called in a structured way
+- isolate auth mode, base URL env-var references, HTTP request shapes, and extraction rules
+- keep planner-facing tool selection separate from execution mechanics
 
-Current integrations:
+Current integrations expected in this model include:
 
 - GPU status
 - Jellyseerr
 
-This layer is where service-specific code belongs. It is not where tool selection belongs.
+This layer is where integration specifications belong. It is not where tool selection belongs.
 
 ## Unsupported Requests
 
@@ -341,10 +384,10 @@ Those belong in source control or deployment configuration, depending on the typ
 
 The safest migration path is:
 
-1. keep executor code where it is
-2. extract tool discovery and execution behind an MCP server
-3. move only tool metadata into Postgres
-4. add strict validation between published metadata and executor bindings
+1. extract tool discovery and execution behind an MCP server
+2. define a constrained generic execution engine in source code
+3. move tool metadata, integration definitions, and execution specs into Postgres
+4. add strict validation between published specs and the engine's supported capabilities
 5. add an admin GUI for draft, validate, publish, and rollback workflows
 6. fold `pipeline-server` into the orchestrator and retire the split audio path
 
