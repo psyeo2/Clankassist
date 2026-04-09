@@ -8,9 +8,16 @@ export const ping: RequestHandler = async (_request, response): Promise<void> =>
 
   handleResponse(response, 200, "Ok", {
     uptime: process.uptime(),
+    apiVersion: process.env.API_VERSION ?? "1",
     mcp: {
       ...mcpClient.getConfiguration(),
       toolCount: tools.length,
+    },
+    whisper: {
+      url: process.env.WHISPER_URL ?? null,
+    },
+    piper: {
+      url: process.env.PIPER_URL ?? null,
     },
   });
 };

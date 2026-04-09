@@ -2,11 +2,12 @@ import http from "node:http";
 
 import cors from "cors";
 import dotenv from "dotenv";
-import express, { type ErrorRequestHandler, type RequestHandler } from "express";
+import express from "express";
 
+import { errorHandler, logRequest, notFound } from "./middlewares/index.js";
 import { createRouter } from "./routes/index.js";
 import { mcpClient } from "./services/mcpClient.js";
-import { handleResponse } from "./utils/response.js";
+import { logStartup } from "./utils/logger.js";
 
 dotenv.config();
 
@@ -27,22 +28,7 @@ const app = express();
 app.disable("x-powered-by");
 app.use(cors());
 app.use(express.json());
-
-const notFound: RequestHandler = (request, response): void => {
-  handleResponse(response, 404, "Route not found", {
-    path: request.originalUrl,
-  });
-};
-
-const errorHandler: ErrorRequestHandler = (error, _request, response, next): void => {
-  if (response.headersSent) {
-    next(error);
-    return;
-  }
-
-  const message = error instanceof Error ? error.message : "Internal Server Error";
-  handleResponse(response, 500, message, null);
-};
+app.use(logRequest);
 
 app.use(apiPrefix, createRouter());
 app.use(notFound);
@@ -69,7 +55,10 @@ async function main(): Promise<void> {
   await mcpClient.connect();
 
   server.listen(port, () => {
-    console.log(`Orchestrator is running on http://localhost:${port}${apiPrefix}`);
+    logStartup("orchestrator_started", {
+      url: `http://localhost:${port}${apiPrefix}`,
+      logLevel: process.env.LOG_LEVEL ?? "INFO",
+    });
   });
 }
 
