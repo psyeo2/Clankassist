@@ -15,11 +15,16 @@ export type PlannerSelection = {
   response: string;
 };
 
-type OllamaChatResponse = {
-  message?: {
-    content?: string;
-  };
-  error?: string;
+type LlmChatResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }>;
+    };
+  }>;
+  error?: {
+    message?: string;
+    type?: string;
+  } | string;
 };
 
 const plannerResponseSchema = {
@@ -47,15 +52,35 @@ const plannerResponseSchema = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const getOllamaBaseUrl = (): string => getRequiredBaseUrl(process.env.OLLAMA_URL, "OLLAMA");
+const getLlmBaseUrl = (): string => getRequiredBaseUrl(process.env.LLM_URL, "LLM");
 
-const getOllamaModel = (): string => {
-  const model = process.env.OLLAMA_MODEL?.trim();
+const getLlmModel = (): string => {
+  const model = process.env.LLM_MODEL?.trim();
   if (!model) {
-    throw new Error("OLLAMA_MODEL is not configured.");
+    throw new Error("LLM_MODEL is not configured.");
   }
 
   return model;
+};
+
+const getLlmChatCompletionsUrl = (): string => {
+  const baseUrl = getLlmBaseUrl();
+  return baseUrl.endsWith("/v1")
+    ? joinUrl(baseUrl, "/chat/completions")
+    : joinUrl(baseUrl, "/v1/chat/completions");
+};
+
+const createLlmHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+
+  const apiKey = process.env.LLM_KEY?.trim();
+  if (apiKey) {
+    headers.Authorization = `Bearer ${apiKey}`;
+  }
+
+  return headers;
 };
 
 const isPlannerSelection = (value: unknown): value is PlannerSelection => {
@@ -106,66 +131,87 @@ const parsePlannerContent = (content: string): unknown => {
       return JSON.parse(fenced);
     }
 
-    throw new HttpError(502, "oLLaMa returned invalid JSON.", {
-      service: "ollama",
+    throw new HttpError(502, "LLM returned invalid JSON.", {
+      service: "llm",
       content,
     });
   }
 };
 
+const extractContentText = (payload: LlmChatResponse): string | null => {
+  const content = payload.choices?.[0]?.message?.content;
+  if (typeof content === "string") {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    const text = content
+      .map((item) => (typeof item.text === "string" ? item.text : ""))
+      .join("")
+      .trim();
+
+    return text === "" ? null : text;
+  }
+
+  return null;
+};
+
 export const planToolSelection = async (speech: string): Promise<PlannerSelection> => {
   const tools = await getPlannerTools();
   const response = await fetchUpstream(
-    "ollama",
-    joinUrl(getOllamaBaseUrl(), "/api/chat"),
+    "llm",
+    getLlmChatCompletionsUrl(),
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: createLlmHeaders(),
       body: JSON.stringify({
-        model: getOllamaModel(),
+        model: getLlmModel(),
         stream: false,
-        format: plannerResponseSchema,
-        options: {
-          temperature: 0,
-        },
+        temperature: 0,
         messages: [
           {
+            role: "system",
+            content:
+              "You are a tool planner for a local assistant. Return exactly one JSON object and no surrounding prose.",
+          },
+          {
             role: "user",
-            content: createPlanningPrompt(speech, tools),
+            content: `${createPlanningPrompt(speech, tools)}\nReturn JSON matching this schema: ${JSON.stringify(
+              plannerResponseSchema,
+            )}`,
           },
         ],
       }),
     },
     {
-      model: getOllamaModel(),
+      model: getLlmModel(),
       toolCount: tools.length,
     },
   );
 
   if (!response.ok) {
-    throw new HttpError(502, "oLLaMa planning request failed.", {
-      service: "ollama",
+    throw new HttpError(502, "LLM planning request failed.", {
+      service: "llm",
       upstreamStatus: response.status,
       upstreamBody: await readResponsePreview(response),
     });
   }
 
-  const payload = (await response.json()) as OllamaChatResponse;
-  const content = payload.message?.content;
+  const payload = (await response.json()) as LlmChatResponse;
+  const content = extractContentText(payload);
 
   if (!content) {
-    throw new HttpError(502, "oLLaMa returned an empty planning response.", {
-      service: "ollama",
+    throw new HttpError(502, "LLM returned an empty planning response.", {
+      service: "llm",
+      payload,
     });
   }
 
   const parsedContent = parsePlannerContent(content);
 
   if (!isPlannerSelection(parsedContent)) {
-    throw new HttpError(502, "oLLaMa returned an invalid planner payload.", {
-      service: "ollama",
+    throw new HttpError(502, "LLM returned an invalid planner payload.", {
+      service: "llm",
       payload: parsedContent,
     });
   }
@@ -176,8 +222,8 @@ export const planToolSelection = async (speech: string): Promise<PlannerSelectio
     parsedContent.tool !== "system.unsupported_request" &&
     !supportedTools.has(parsedContent.tool)
   ) {
-    throw new HttpError(502, "oLLaMa selected an unknown tool.", {
-      service: "ollama",
+    throw new HttpError(502, "LLM selected an unknown tool.", {
+      service: "llm",
       tool: parsedContent.tool,
     });
   }

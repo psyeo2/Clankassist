@@ -1,8 +1,8 @@
 import type { RequestHandler } from "express";
 
 import { extractToolText } from "../helpers/toolResult.js";
+import { planToolSelection } from "../services/llm.js";
 import { mcpClient } from "../services/mcpClient.js";
-import { planToolSelection } from "../services/ollama.js";
 import { synthesiseSpeech } from "../services/piperApi.js";
 import { transcribeAudio } from "../services/whisperApi.js";
 import { HttpError } from "../utils/errors.js";

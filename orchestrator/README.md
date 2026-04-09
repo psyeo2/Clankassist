@@ -1,11 +1,11 @@
 # Orchestrator
 
-`orchestrator/` is the HTTP-facing service for Diakonos Assist. It owns request intake, oLLaMa planning, audio routing, response shaping, and MCP client communication.
+`orchestrator/` is the HTTP-facing service for Diakonos Assist. It owns request intake, LLM planning, audio routing, response shaping, and MCP client communication.
 
 Current scope:
 
 - spawn and connect to the local stdio MCP server
-- fetch tools from MCP and ask oLLaMa to choose the correct one for speech requests
+- fetch tools from MCP and ask an OpenAI-compatible LLM API to choose the correct one for speech requests
 - expose a public `respond` endpoint for text/audio input and `json|text|audio` output
 - expose a stub WebSocket `listen` endpoint for future wake-word/VAD streaming
 - provide internal/debug routes for health, tools, direct process calls, Whisper, and Piper
@@ -47,7 +47,7 @@ Direct tool execution:
 }
 ```
 
-Speech planning through oLLaMa:
+Speech planning through the configured LLM:
 
 ```json
 {
@@ -84,8 +84,9 @@ Piper passthrough:
 ## Required Env
 
 - `MCP_SERVER_SCRIPT`
-- `OLLAMA_URL`
-- `OLLAMA_MODEL`
+- `LLM_URL`
+- `LLM_KEY`
+- `LLM_MODEL`
 - `WHISPER_URL`
 - `PIPER_URL`
 - `PG_HOST`
