@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 
 import type { ErrorRequestHandler, RequestHandler } from "express";
 
+export { authenticateBearerToken } from "./authenticateBearerToken.js";
+export { isAdmin } from "./isAdmin.js";
+
 import { isHttpError } from "../utils/errors.js";
 import {
   createRequestContext,
