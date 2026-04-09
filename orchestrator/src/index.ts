@@ -4,7 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express, { type ErrorRequestHandler, type RequestHandler } from "express";
 
-import { createRouter } from "./router.js";
+import { createRouter } from "./routes/index.js";
 import { mcpClient } from "./services/mcpClient.js";
 import { handleResponse } from "./utils/response.js";
 
