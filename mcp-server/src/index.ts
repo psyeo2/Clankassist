@@ -4,6 +4,8 @@ import dotenv from "dotenv";
 import { z } from "zod";
 
 import { loadCatalogSnapshot, type CatalogToolDefinition } from "./catalog.js";
+import { executeTool } from "./executor.js";
+import { jsonSchemaToZodShape } from "./schema.js";
 
 dotenv.config();
 
@@ -31,7 +33,7 @@ const registerBuiltinTools = (server: McpServer, catalogSource: "builtin" | "pos
         status: "ok",
         server: "diakonos-assist-mcp-server",
         catalogSource,
-        integrations: "pending",
+        integrations: "generic_executor",
       },
     }),
   );
@@ -60,7 +62,7 @@ const registerBuiltinTools = (server: McpServer, catalogSource: "builtin" | "pos
 
 const registerCatalogTools = (server: McpServer, tools: CatalogToolDefinition[]): void => {
   for (const tool of tools) {
-    if (tool.integrationKey === "system.health" || tool.integrationKey === "system.echo") {
+    if (tool.name === "system.health" || tool.name === "system.echo") {
       continue;
     }
 
@@ -68,23 +70,21 @@ const registerCatalogTools = (server: McpServer, tools: CatalogToolDefinition[])
       tool.name,
       {
         description: tool.description,
-        inputSchema: tool.inputSchema,
+        inputSchema: jsonSchemaToZodShape(tool.inputSchema),
       },
-      async () => ({
-        content: [
-          {
-            type: "text",
-            text: `Tool "${tool.name}" is registered from Postgres, but its executor is not implemented yet.`,
-          },
-        ],
-        structuredContent: {
-          tool: tool.name,
-          integrationKey: tool.integrationKey,
-          executionSummary: tool.executionSummary,
-          source: "postgres",
-          status: "not_implemented",
-        },
-      }),
+      async (args) => {
+        const result = await executeTool(tool, args as Record<string, unknown>);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: result.contentText,
+            },
+          ],
+          structuredContent: result.structuredContent,
+        };
+      },
     );
   }
 };
