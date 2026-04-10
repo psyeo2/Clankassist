@@ -23,9 +23,15 @@ export class LocalMcpClient {
 
   private transport: StdioClientTransport | null = null;
   private connected = false;
+  private connectPromise: Promise<void> | null = null;
 
   public async connect(): Promise<void> {
     if (this.connected) {
+      return;
+    }
+
+    if (this.connectPromise) {
+      await this.connectPromise;
       return;
     }
 
@@ -46,30 +52,37 @@ export class LocalMcpClient {
       serverScript,
     });
 
-    try {
-      await this.client.connect(this.transport);
-      this.connected = true;
+    this.connectPromise = (async () => {
+      try {
+        await this.client.connect(this.transport as StdioClientTransport);
+        this.connected = true;
 
-      logEvent("subresponse", {
-        service: "mcp-server",
-        action: "connect",
-        status: "connected",
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown error";
+        logEvent("subresponse", {
+          service: "mcp-server",
+          action: "connect",
+          status: "connected",
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unknown error";
+        this.transport = null;
 
-      logEvent("subrequest_failed", {
-        service: "mcp-server",
-        action: "connect",
-        error: message,
-      });
+        logEvent("subrequest_failed", {
+          service: "mcp-server",
+          action: "connect",
+          error: message,
+        });
 
-      throw new HttpError(502, "MCP server connection failed.", {
-        service: "mcp-server",
-        serverScript,
-        error: message,
-      });
-    }
+        throw new HttpError(502, "MCP server connection failed.", {
+          service: "mcp-server",
+          serverScript,
+          error: message,
+        });
+      } finally {
+        this.connectPromise = null;
+      }
+    })();
+
+    await this.connectPromise;
   }
 
   public async listTools() {
@@ -160,13 +173,39 @@ export class LocalMcpClient {
   }
 
   public async close(): Promise<void> {
+    if (this.connectPromise) {
+      await this.connectPromise.catch(() => undefined);
+    }
+
     if (!this.connected) {
+      this.transport = null;
       return;
     }
 
     await this.client.close();
     this.connected = false;
     this.transport = null;
+  }
+
+  public async restart(): Promise<{ command: string; serverScript: string }> {
+    const configuration = this.getConfiguration();
+
+    logEvent("subrequest", {
+      service: "mcp-server",
+      action: "restart",
+      ...configuration,
+    });
+
+    await this.close();
+    await this.connect();
+
+    logEvent("subresponse", {
+      service: "mcp-server",
+      action: "restart",
+      status: "connected",
+    });
+
+    return configuration;
   }
 }
 

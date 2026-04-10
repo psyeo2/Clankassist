@@ -10,10 +10,14 @@
       </div>
     </header>
 
-    <p v-if="errorMessage" class="inline-message inline-message--danger">{{ errorMessage }}</p>
+    <p v-if="errorMessage && !showApiUnavailable" class="inline-message inline-message--danger">
+      {{ errorMessage }}
+    </p>
     <p v-if="successMessage" class="inline-message inline-message--success">{{ successMessage }}</p>
 
-    <div class="page-devices__workspace">
+    <ApiUnavailablePanel v-if="showApiUnavailable" :message="apiAvailability.message" />
+
+    <div v-else class="page-devices__workspace">
       <aside class="panel">
         <div class="section-heading">
           <AppIcon icon="battery-line" />
@@ -157,7 +161,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 
+import ApiUnavailablePanel from '@/components/ApiUnavailablePanel.vue'
 import AppIcon from '@/components/AppIcon.vue'
+import { apiAvailability } from '@/lib/apiAvailability'
 import { createDevice, issueDeviceToken, listDevices, type AdminDeviceRecord } from '@/lib/api'
 
 type DeviceFormState = {
@@ -184,6 +190,7 @@ const isBusy = ref(false)
 const isLoading = ref(true)
 const selectedDeviceId = ref('')
 const successMessage = ref('')
+const showApiUnavailable = computed(() => !apiAvailability.isReachable)
 
 const selectedDevice = computed(
   () => devices.value.find((device) => device.id === selectedDeviceId.value) ?? null,

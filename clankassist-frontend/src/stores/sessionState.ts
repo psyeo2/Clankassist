@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 
 import { isDevAuthBypassEnabled } from '@/lib/env'
-import { createPassword, getAuthState, loginWithPassword, logoutSession } from '@/lib/api'
+import { createPassword, getAuthState, hasStoredSession, loginWithPassword, logoutSession } from '@/lib/api'
 import { defaultPaletteId, paletteMap, palettes } from '@/lib/palettes'
 
 const PALETTE_STORAGE_KEY = 'clankassist.palette'
@@ -83,7 +83,7 @@ export const useSessionState = defineStore('sessionState', () => {
     } catch (error) {
       initializationError.value =
         error instanceof Error ? error.message : 'Unable to reach the orchestrator.'
-      isAuthenticated.value = false
+      isAuthenticated.value = hasStoredSession()
       requiresPasswordSetup.value = false
     } finally {
       isInitialized.value = true

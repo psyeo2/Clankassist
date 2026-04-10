@@ -11,10 +11,15 @@
       </div>
     </header>
 
-    <p v-if="errorMessage" class="inline-message inline-message--danger">{{ errorMessage }}</p>
+    <p v-if="errorMessage && !showApiUnavailable" class="inline-message inline-message--danger">
+      {{ errorMessage }}
+    </p>
     <p v-if="successMessage" class="inline-message inline-message--success">{{ successMessage }}</p>
 
-    <div class="page-manual__layout">
+    <ApiUnavailablePanel v-if="showApiUnavailable" :message="apiAvailability.message" />
+
+    <template v-else>
+      <div class="page-manual__layout">
       <section class="panel">
         <div class="section-heading">
           <AppIcon icon="shield-keyhole-line" />
@@ -92,42 +97,45 @@
           </button>
         </form>
       </section>
-    </div>
-
-    <section class="panel">
-      <div class="section-heading">
-        <AppIcon icon="record-circle-line" />
-        <span class="section-heading__title">Response</span>
       </div>
 
-      <article v-if="responseState.kind === 'empty'" class="stack-list__item">
-        <h2 class="stack-list__title">No response yet</h2>
-        <p class="muted-copy">Run a request to inspect the orchestrator output here.</p>
-      </article>
+      <section class="panel">
+        <div class="section-heading">
+          <AppIcon icon="record-circle-line" />
+          <span class="section-heading__title">Response</span>
+        </div>
 
-      <article v-else-if="responseState.kind === 'json'" class="stack-list__item">
-        <h2 class="stack-list__title">JSON response</h2>
-        <pre class="code-block">{{ responseState.value }}</pre>
-      </article>
+        <article v-if="responseState.kind === 'empty'" class="stack-list__item">
+          <h2 class="stack-list__title">No response yet</h2>
+          <p class="muted-copy">Run a request to inspect the orchestrator output here.</p>
+        </article>
 
-      <article v-else-if="responseState.kind === 'text'" class="stack-list__item">
-        <h2 class="stack-list__title">Text response</h2>
-        <pre class="code-block">{{ responseState.value }}</pre>
-      </article>
+        <article v-else-if="responseState.kind === 'json'" class="stack-list__item">
+          <h2 class="stack-list__title">JSON response</h2>
+          <pre class="code-block">{{ responseState.value }}</pre>
+        </article>
 
-      <article v-else class="stack-list__item">
-        <h2 class="stack-list__title">Audio response</h2>
-        <audio class="page-manual__audio" controls :src="responseState.value"></audio>
-        <a class="action-button" :href="responseState.value" download="response.wav">Download audio</a>
-      </article>
-    </section>
+        <article v-else-if="responseState.kind === 'text'" class="stack-list__item">
+          <h2 class="stack-list__title">Text response</h2>
+          <pre class="code-block">{{ responseState.value }}</pre>
+        </article>
+
+        <article v-else class="stack-list__item">
+          <h2 class="stack-list__title">Audio response</h2>
+          <audio class="page-manual__audio" controls :src="responseState.value"></audio>
+          <a class="action-button" :href="responseState.value" download="response.wav">Download audio</a>
+        </article>
+      </section>
+    </template>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 
+import ApiUnavailablePanel from '@/components/ApiUnavailablePanel.vue'
 import AppIcon from '@/components/AppIcon.vue'
+import { apiAvailability } from '@/lib/apiAvailability'
 import {
   callAdminTestRespondAudio,
   callAdminTestRespondText,
@@ -150,6 +158,7 @@ const responseState = ref<ResponseState>({ kind: 'empty', value: '' })
 const selectedFile = ref<File | null>(null)
 const successMessage = ref('')
 const textInput = ref('')
+const showApiUnavailable = computed(() => !apiAvailability.isReachable)
 
 function revokeAudioUrl() {
   if (responseState.value.kind === 'audio') {

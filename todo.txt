@@ -1,6 +1,6 @@
 # To durationMs
 
-## 1. Add "helper" mode to MCP management interface
+## 1. Add "helper" mode to MCP management interface ✅
 
 When a tool is selected the "Selected tool versions" panel appears.
 
@@ -14,11 +14,11 @@ Also, you should be able to see the current config of a tool by selecting the ve
 
 There is poor consistency in the tool tags. The `system` tools have available tag, but not in green. That should be green. The created tools don't have the available tag.
 
-## 2. Unavailable API handling
+## 2. Unavailable API handling ✅
 
 If the API is unreachable, there is no point rendering most of every page. Should just display an API unreachable error, and not bother with the rest.
 
-## 3. MCP restarting
+## 3. MCP restarting ✅
 
 When tools are added or modified, the MCP server needs to be restarted for changes to take effect. This should be made known, and a button should be created that can do this in the MCP management page.
 
@@ -34,6 +34,10 @@ Even on pages with less content than the height, there is a tiny amount of scrol
 
 The header and footer are nice, but stop too abruptly. It is jarring. They should either go the whole way across, or be more smoothly transitioned into the background.
 
+New tool button is very ugly. Icon is not acceptable. Icons on that page need work in general.
+
 ## 6. The Websocket
 
 Allow perpetual audio streaming to a websocket with wake word and VAD determining what gets sent to whisper, then responses sent back across the websocket.
+
+## 7. Have a look at unreachable api box. It is inconsistent.

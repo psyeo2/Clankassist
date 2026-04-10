@@ -1,4 +1,5 @@
 import { getDefaultApiBaseUrl } from '@/lib/env'
+import { markApiReachable, markApiUnreachable } from '@/lib/apiAvailability'
 
 type ApiEnvelope<T> = {
   status: number
@@ -25,6 +26,13 @@ type StoredSession = {
 const SESSION_STORAGE_KEY = 'clankassist.session'
 
 let refreshPromise: Promise<boolean> | null = null
+
+class ApiNetworkError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ApiNetworkError'
+  }
+}
 
 export interface AuthState {
   isAuthenticated: boolean
@@ -128,6 +136,12 @@ export interface ResourceVersionRecord {
   updated_at: string
 }
 
+export interface McpRestartResult {
+  command: string
+  serverScript: string
+  tool_count: number
+}
+
 export interface RespondResult {
   audioUrl?: string
   contentType: string
@@ -168,6 +182,8 @@ const readSession = (): StoredSession | null => {
   return null
 }
 
+export const hasStoredSession = (): boolean => readSession() !== null
+
 const writeSession = (session: StoredSession) => {
   if (typeof window === 'undefined') {
     return
@@ -187,6 +203,26 @@ const clearSession = () => {
 const joinApiUrl = (path: string) => {
   const base = readApiBaseUrl().replace(/\/+$/, '')
   return `${base}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+const buildApiUnreachableMessage = () =>
+  `API unreachable. Could not connect to ${readApiBaseUrl()}.`
+
+const performFetch = async (input: string, init?: RequestInit): Promise<Response> => {
+  try {
+    const response = await fetch(input, init)
+    markApiReachable()
+    return response
+  } catch (error) {
+    const message = buildApiUnreachableMessage()
+    markApiUnreachable(message)
+
+    if (error instanceof Error) {
+      throw new ApiNetworkError(message)
+    }
+
+    throw new ApiNetworkError(message)
+  }
 }
 
 const extractErrorMessage = async (response: Response): Promise<string> => {
@@ -215,7 +251,7 @@ const refreshAdminSession = async (): Promise<boolean> => {
   if (!refreshPromise) {
     refreshPromise = (async () => {
       try {
-        const response = await fetch(joinApiUrl('/api/v1/admin/refresh'), {
+        const response = await performFetch(joinApiUrl('/api/v1/admin/refresh'), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -242,7 +278,6 @@ const refreshAdminSession = async (): Promise<boolean> => {
 
         return true
       } catch {
-        clearSession()
         return false
       } finally {
         refreshPromise = null
@@ -261,7 +296,7 @@ const request = async <T>(path: string, options: RequestOptions = {}): Promise<T
     headers.set('Authorization', `Bearer ${session.accessToken}`)
   }
 
-  const response = await fetch(joinApiUrl(path), {
+  const response = await performFetch(joinApiUrl(path), {
     method: options.method ?? 'GET',
     headers,
     body: options.body,
@@ -308,7 +343,7 @@ const fetchWithAdminAuth = async (
     headers.set('Authorization', `Bearer ${session.accessToken}`)
   }
 
-  const response = await fetch(joinApiUrl(path), {
+  const response = await performFetch(joinApiUrl(path), {
     ...init,
     headers,
   })
@@ -395,7 +430,11 @@ export async function getAuthState(): Promise<AuthState> {
       isAuthenticated: true,
       requiresPasswordSetup: false,
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof ApiNetworkError) {
+      throw error
+    }
+
     clearSession()
     return {
       isAuthenticated: false,
@@ -677,12 +716,19 @@ export async function publishResourceVersion(
   })
 }
 
+export async function restartMcpServer() {
+  return request<McpRestartResult>('/api/v1/admin/mcp/restart', {
+    auth: 'admin',
+    method: 'POST',
+  })
+}
+
 export async function callDeviceRespondText(input: {
   deviceToken: string
   output: 'audio' | 'json' | 'text'
   text: string
 }): Promise<RespondResult> {
-  const response = await fetch(joinApiUrl(`/api/v1/respond?output=${input.output}`), {
+  const response = await performFetch(joinApiUrl(`/api/v1/respond?output=${input.output}`), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${input.deviceToken}`,
@@ -706,7 +752,7 @@ export async function callDeviceRespondAudio(input: {
   const formData = new FormData()
   formData.append('file', input.file, input.file.name)
 
-  const response = await fetch(joinApiUrl(`/api/v1/respond?output=${input.output}`), {
+  const response = await performFetch(joinApiUrl(`/api/v1/respond?output=${input.output}`), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${input.deviceToken}`,

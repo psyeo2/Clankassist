@@ -325,3 +325,13 @@ export const publishResourceVersion: RequestHandler = async (
 
   handleResponse(response, 200, "Resource version published", published);
 };
+
+export const restartMcpServer: RequestHandler = async (_request, response): Promise<void> => {
+  const configuration = await mcpClient.restart();
+  const tools = await mcpClient.listTools();
+
+  handleResponse(response, 200, "MCP server restarted", {
+    ...configuration,
+    tool_count: tools.length,
+  });
+};

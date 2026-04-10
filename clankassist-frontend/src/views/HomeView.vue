@@ -6,6 +6,18 @@
       <p class="page__lede">Loading orchestrator state.</p>
     </div>
 
+    <template v-else-if="showApiUnavailable">
+      <header class="page__header">
+        <div>
+          <p class="page__eyebrow">Overview</p>
+          <h1 class="page__title">Clankassist</h1>
+          <p class="page__lede">Dashboard content is paused until the admin API comes back.</p>
+        </div>
+      </header>
+
+      <ApiUnavailablePanel :message="apiAvailability.message" />
+    </template>
+
     <template v-else-if="dashboard">
       <div class="page-home__mast">
         <section class="panel page-home__title-panel">
@@ -85,20 +97,25 @@
       </div>
     </template>
 
-    <p v-if="errorMessage" class="inline-message inline-message--danger">{{ errorMessage }}</p>
+    <p v-if="errorMessage && !showApiUnavailable" class="inline-message inline-message--danger">
+      {{ errorMessage }}
+    </p>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
+import ApiUnavailablePanel from '@/components/ApiUnavailablePanel.vue'
 import AppIcon from '@/components/AppIcon.vue'
+import { apiAvailability } from '@/lib/apiAvailability'
 import { getDashboardData, type DashboardData } from '@/lib/api'
 
 const dashboard = ref<DashboardData | null>(null)
 const errorMessage = ref('')
 const isLoading = ref(true)
+const showApiUnavailable = computed(() => !apiAvailability.isReachable)
 
 onMounted(async () => {
   try {

@@ -11,6 +11,7 @@ import {
   listToolVersions,
   publishResourceVersion,
   publishToolVersion,
+  restartMcpServer,
 } from "../controllers/adminCatalog.js";
 import { authenticateAdminSession } from "../middlewares/index.js";
 
@@ -28,5 +29,6 @@ router.post("/admin/resources", createResource);
 router.get("/admin/resources/:resourceId/versions", listResourceVersions);
 router.post("/admin/resources/:resourceId/versions", createResourceVersion);
 router.post("/admin/resources/:resourceId/publish", publishResourceVersion);
+router.post("/admin/mcp/restart", restartMcpServer);
 
 export default router;
