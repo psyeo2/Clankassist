@@ -8,7 +8,7 @@ type ExecutionContext = {
     CatalogToolDefinition,
     | "integrationKey"
     | "transport"
-    | "baseUrlEnvVar"
+    | "baseUrl"
     | "authStrategy"
     | "authConfig"
     | "defaultHeaders"
@@ -57,6 +57,19 @@ const readEnv = (name: string): string => {
   return value;
 };
 
+const resolveBaseUrl = (baseUrlReference: string): string => {
+  const value = baseUrlReference.trim();
+  if (value === "") {
+    throw new Error("Integration base URL reference is not set.");
+  }
+
+  if (value.startsWith("http://") || value.startsWith("https://")) {
+    return value;
+  }
+
+  return readEnv(value);
+};
+
 const getPathValue = (source: unknown, path: string): unknown => {
   if (path === "") {
     return source;
@@ -88,6 +101,10 @@ const interpolateString = (template: string, context: Record<string, unknown>): 
   });
 
 const resolveValue = (value: unknown, context: Record<string, unknown>): unknown => {
+  if (value === undefined) {
+    return undefined;
+  }
+
   if (typeof value === "string") {
     return interpolateString(value, context);
   }
@@ -297,7 +314,7 @@ const buildRequest = (
 
   const executionSpec = asRecord(tool.executionSpec);
   const requestSpec = asRecord(executionSpec.request);
-  const baseUrl = readEnv(tool.baseUrlEnvVar);
+  const baseUrl = resolveBaseUrl(tool.baseUrl);
   const method =
     typeof requestSpec.method === "string" ? requestSpec.method.toUpperCase() : "GET";
   const context: Record<string, unknown> = {

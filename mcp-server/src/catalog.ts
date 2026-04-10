@@ -10,7 +10,7 @@ export type CatalogToolDefinition = {
   executionMode: "http";
   executionSpec: Record<string, unknown>;
   transport: "http";
-  baseUrlEnvVar: string;
+  baseUrl: string;
   authStrategy:
     | "none"
     | "bearer_env"
@@ -91,7 +91,7 @@ export const loadCatalogSnapshot = async (): Promise<CatalogSnapshot> => {
       execution_mode: "http";
       execution_spec: Record<string, unknown> | null;
       transport: "http";
-      base_url_env_var: string;
+      base_url: string;
       auth_strategy:
         | "none"
         | "bearer_env"
@@ -115,7 +115,7 @@ export const loadCatalogSnapshot = async (): Promise<CatalogSnapshot> => {
         execution_mode,
         execution_spec,
         transport,
-        base_url_env_var,
+        base_url,
         auth_strategy,
         auth_config,
         default_headers,
@@ -162,7 +162,7 @@ export const loadCatalogSnapshot = async (): Promise<CatalogSnapshot> => {
         executionMode: row.execution_mode,
         executionSpec: asRecord(row.execution_spec),
         transport: row.transport,
-        baseUrlEnvVar: row.base_url_env_var,
+        baseUrl: row.base_url,
         authStrategy: row.auth_strategy,
         authConfig: asRecord(row.auth_config),
         defaultHeaders: asRecord(row.default_headers),

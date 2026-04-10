@@ -2,38 +2,9 @@ import { closePool, query } from "./db.js";
 
 const statements: string[] = [
   `
-    CREATE TABLE IF NOT EXISTS integrations (
-      id BIGSERIAL PRIMARY KEY,
-      key TEXT NOT NULL UNIQUE,
-      display_name TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      transport TEXT NOT NULL CHECK (transport IN ('http')),
-      base_url_env_var TEXT NOT NULL,
-      auth_strategy TEXT NOT NULL DEFAULT 'none'
-        CHECK (
-          auth_strategy IN (
-            'none',
-            'bearer_env',
-            'api_key_header_env',
-            'api_key_query_env',
-            'basic_env'
-          )
-        ),
-      auth_config JSONB NOT NULL DEFAULT '{}'::jsonb,
-      default_headers JSONB NOT NULL DEFAULT '{}'::jsonb,
-      allowed_hosts JSONB NOT NULL DEFAULT '[]'::jsonb,
-      timeout_ms INTEGER NOT NULL DEFAULT 10000 CHECK (timeout_ms > 0),
-      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-      enabled BOOLEAN NOT NULL DEFAULT TRUE,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-  `,
-  `
     CREATE TABLE IF NOT EXISTS tools (
       id BIGSERIAL PRIMARY KEY,
       name TEXT NOT NULL UNIQUE,
-      integration_id BIGINT NOT NULL REFERENCES integrations(id) ON DELETE RESTRICT,
       current_published_version_id BIGINT NULL,
       enabled BOOLEAN NOT NULL DEFAULT TRUE,
       planner_visible BOOLEAN NOT NULL DEFAULT TRUE,
@@ -217,16 +188,8 @@ const statements: string[] = [
       ON DELETE SET NULL;
   `,
   `
-    CREATE INDEX IF NOT EXISTS idx_tools_integration_id
-      ON tools (integration_id);
-  `,
-  `
     CREATE INDEX IF NOT EXISTS idx_tool_versions_tool_id_status
       ON tool_versions (tool_id, status);
-  `,
-  `
-    CREATE INDEX IF NOT EXISTS idx_integrations_enabled
-      ON integrations (enabled);
   `,
   `
     CREATE INDEX IF NOT EXISTS idx_resource_versions_resource_id_status
@@ -255,28 +218,25 @@ const statements: string[] = [
       tv.description,
       tv.input_schema,
       tv.result_schema,
-      i.key AS integration_key,
+      t.name AS integration_key,
       tv.execution_summary,
       tv.execution_mode,
       tv.execution_spec,
-      i.transport,
-      i.base_url_env_var,
-      i.auth_strategy,
-      i.auth_config,
-      i.default_headers,
-      i.allowed_hosts,
-      i.timeout_ms,
-      i.metadata AS integration_metadata,
+      'http'::text AS transport,
+      COALESCE(tv.execution_spec ->> 'base_url', '') AS base_url,
+      COALESCE(tv.execution_spec ->> 'auth_strategy', 'none') AS auth_strategy,
+      COALESCE(tv.execution_spec -> 'auth_config', '{}'::jsonb) AS auth_config,
+      COALESCE(tv.execution_spec -> 'default_headers', '{}'::jsonb) AS default_headers,
+      COALESCE(tv.execution_spec -> 'allowed_hosts', '[]'::jsonb) AS allowed_hosts,
+      COALESCE(NULLIF(tv.execution_spec ->> 'timeout_ms', '')::integer, 10000) AS timeout_ms,
+      COALESCE(tv.execution_spec -> 'integration_metadata', '{}'::jsonb) AS integration_metadata,
       tv.metadata AS tool_metadata
     FROM tools t
-    INNER JOIN integrations i
-      ON i.id = t.integration_id
     INNER JOIN tool_versions tv
       ON tv.id = t.current_published_version_id
     WHERE
       t.enabled = TRUE
       AND t.planner_visible = TRUE
-      AND i.enabled = TRUE
       AND tv.status = 'published';
   `,
   `

@@ -3,33 +3,9 @@ import type { PoolClient } from "pg";
 import { pool, query } from "../config/db.js";
 import { HttpError } from "../utils/errors.js";
 
-type IntegrationRecord = {
-  id: string;
-  key: string;
-  display_name: string;
-  description: string;
-  transport: "http";
-  base_url_env_var: string;
-  auth_strategy:
-    | "none"
-    | "bearer_env"
-    | "api_key_header_env"
-    | "api_key_query_env"
-    | "basic_env";
-  auth_config: Record<string, unknown>;
-  default_headers: Record<string, unknown>;
-  allowed_hosts: unknown[];
-  timeout_ms: number;
-  metadata: Record<string, unknown>;
-  enabled: boolean;
-  created_at: string;
-  updated_at: string;
-};
-
 type ToolRecord = {
   id: string;
   name: string;
-  integration_id: string;
   current_published_version_id: string | null;
   enabled: boolean;
   planner_visible: boolean;
@@ -79,30 +55,8 @@ type ResourceVersionRecord = {
   updated_at: string;
 };
 
-type IntegrationInput = {
-  key: string;
-  displayName: string;
-  description?: string;
-  transport: "http";
-  baseUrlEnvVar: string;
-  authStrategy:
-    | "none"
-    | "bearer_env"
-    | "api_key_header_env"
-    | "api_key_query_env"
-    | "basic_env";
-  authConfig?: Record<string, unknown>;
-  defaultHeaders?: Record<string, unknown>;
-  allowedHosts?: string[];
-  timeoutMs?: number;
-  metadata?: Record<string, unknown>;
-  enabled?: boolean;
-};
-
 type ToolInput = {
   name: string;
-  integrationId?: string;
-  integrationKey?: string;
   enabled?: boolean;
   plannerVisible?: boolean;
 };
@@ -151,38 +105,6 @@ const withTransaction = async <T>(callback: (client: PoolClient) => Promise<T>):
   }
 };
 
-const getIntegrationById = async (
-  client: PoolClient,
-  integrationId: string,
-): Promise<IntegrationRecord | null> => {
-  const result = await client.query<IntegrationRecord>(
-    `
-      SELECT *
-      FROM integrations
-      WHERE id = $1
-    `,
-    [integrationId],
-  );
-
-  return result.rows[0] ?? null;
-};
-
-const getIntegrationByKey = async (
-  client: PoolClient,
-  integrationKey: string,
-): Promise<IntegrationRecord | null> => {
-  const result = await client.query<IntegrationRecord>(
-    `
-      SELECT *
-      FROM integrations
-      WHERE key = $1
-    `,
-    [integrationKey],
-  );
-
-  return result.rows[0] ?? null;
-};
-
 const getToolById = async (client: PoolClient, toolId: string): Promise<ToolRecord | null> => {
   const result = await client.query<ToolRecord>(
     `
@@ -210,31 +132,6 @@ const getResourceById = async (
   );
 
   return result.rows[0] ?? null;
-};
-
-const resolveIntegrationId = async (
-  client: PoolClient,
-  input: ToolInput,
-): Promise<string> => {
-  if (input.integrationId) {
-    const integration = await getIntegrationById(client, input.integrationId);
-    if (!integration) {
-      throw new HttpError(404, "Integration not found.");
-    }
-
-    return integration.id;
-  }
-
-  if (input.integrationKey) {
-    const integration = await getIntegrationByKey(client, input.integrationKey);
-    if (!integration) {
-      throw new HttpError(404, "Integration not found.");
-    }
-
-    return integration.id;
-  }
-
-  throw new HttpError(400, "Provide either 'integration_id' or 'integration_key'.");
 };
 
 const getNextToolVersionNumber = async (
@@ -325,109 +222,36 @@ const getResourceVersionTarget = async (
   return row;
 };
 
-export const createIntegrationRecord = async (
-  input: IntegrationInput,
-): Promise<IntegrationRecord> => {
-  const result = await query<IntegrationRecord>(
+export const createToolRecord = async (input: ToolInput): Promise<ToolRecord> => {
+  const result = await query<ToolRecord>(
     `
-      INSERT INTO integrations (
-        key,
-        display_name,
-        description,
-        transport,
-        base_url_env_var,
-        auth_strategy,
-        auth_config,
-        default_headers,
-        allowed_hosts,
-        timeout_ms,
-        metadata,
-        enabled
+      INSERT INTO tools (
+        name,
+        enabled,
+        planner_visible
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10, $11::jsonb, $12)
+      VALUES ($1, $2, $3)
       RETURNING *
     `,
-    [
-      input.key,
-      input.displayName,
-      input.description ?? "",
-      input.transport,
-      input.baseUrlEnvVar,
-      input.authStrategy,
-      JSON.stringify(input.authConfig ?? {}),
-      JSON.stringify(input.defaultHeaders ?? {}),
-      JSON.stringify(input.allowedHosts ?? []),
-      input.timeoutMs ?? 10000,
-      JSON.stringify(input.metadata ?? {}),
-      input.enabled ?? true,
-    ],
+    [input.name, input.enabled ?? true, input.plannerVisible ?? true],
   );
 
   return result.rows[0];
 };
 
-export const listIntegrationRecords = async (): Promise<IntegrationRecord[]> => {
-  const result = await query<IntegrationRecord>(
-    `
-      SELECT *
-      FROM integrations
-      ORDER BY created_at DESC, id DESC
-    `,
-  );
-
-  return result.rows;
-};
-
-export const createToolRecord = async (input: ToolInput): Promise<ToolRecord> =>
-  withTransaction(async (client) => {
-    const integrationId = await resolveIntegrationId(client, input);
-    const result = await client.query<ToolRecord>(
-      `
-        INSERT INTO tools (
-          name,
-          integration_id,
-          enabled,
-          planner_visible
-        )
-        VALUES ($1, $2, $3, $4)
-        RETURNING *
-      `,
-      [
-        input.name,
-        integrationId,
-        input.enabled ?? true,
-        input.plannerVisible ?? true,
-      ],
-    );
-
-    return result.rows[0];
-  });
-
 export const listToolRecords = async (): Promise<
-  Array<
-    ToolRecord & {
-      integration_key: string;
-      integration_display_name: string;
-      published_version_number: number | null;
-    }
-  >
+  Array<ToolRecord & { published_version_number: number | null }>
 > => {
   const result = await query<
     ToolRecord & {
-      integration_key: string;
-      integration_display_name: string;
       published_version_number: number | null;
     }
   >(
     `
       SELECT
         t.*,
-        i.key AS integration_key,
-        i.display_name AS integration_display_name,
         tv.version_number AS published_version_number
       FROM tools t
-      INNER JOIN integrations i
-        ON i.id = t.integration_id
       LEFT JOIN tool_versions tv
         ON tv.id = t.current_published_version_id
       ORDER BY t.created_at DESC, t.id DESC

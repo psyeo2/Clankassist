@@ -35,7 +35,6 @@ export interface DashboardData {
   apiBaseUrl: string
   deviceCount: number
   approvedDeviceCount: number
-  integrationCount: number
   publishedResourceCount: number
   publishedToolCount: number
   resourceCount: number
@@ -73,34 +72,16 @@ export interface CreatedDeviceToken {
   bearer_token: string
 }
 
-export interface IntegrationRecord {
-  id: string
-  key: string
-  display_name: string
-  description: string
-  transport: 'http'
-  base_url_env_var: string
-  auth_strategy: 'none' | 'bearer_env' | 'api_key_header_env' | 'api_key_query_env' | 'basic_env'
-  auth_config: Record<string, unknown>
-  default_headers: Record<string, unknown>
-  allowed_hosts: unknown[]
-  timeout_ms: number
-  metadata: Record<string, unknown>
-  enabled: boolean
-  created_at: string
-  updated_at: string
-}
-
 export interface ToolRecord {
   id: string
   name: string
-  integration_id: string
-  integration_key: string
-  integration_display_name: string
   current_published_version_id: string | null
   published_version_number: number | null
   enabled: boolean
   planner_visible: boolean
+  in_mcp?: boolean
+  immutable?: boolean
+  source?: 'db' | 'mcp'
   created_at: string
   updated_at: string
 }
@@ -488,9 +469,8 @@ export async function logoutSession() {
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
-  const [devicesPayload, integrationsPayload, toolsPayload, resourcesPayload] = await Promise.all([
+  const [devicesPayload, toolsPayload, resourcesPayload] = await Promise.all([
     request<{ devices: AdminDeviceRecord[] }>('/api/v1/admin/devices', { auth: 'admin' }),
-    request<{ integrations: IntegrationRecord[] }>('/api/v1/admin/integrations', { auth: 'admin' }),
     request<{ tools: ToolRecord[] }>('/api/v1/admin/tools', { auth: 'admin' }),
     request<{ resources: ResourceRecord[] }>('/api/v1/admin/resources', { auth: 'admin' }),
   ])
@@ -499,7 +479,6 @@ export async function getDashboardData(): Promise<DashboardData> {
     apiBaseUrl: readApiBaseUrl(),
     deviceCount: devicesPayload.devices.length,
     approvedDeviceCount: devicesPayload.devices.filter((device) => device.status === 'approved').length,
-    integrationCount: integrationsPayload.integrations.length,
     toolCount: toolsPayload.tools.length,
     publishedToolCount: toolsPayload.tools.filter((tool) => tool.published_version_number !== null).length,
     resourceCount: resourcesPayload.resources.length,
@@ -552,41 +531,6 @@ export async function issueDeviceToken(
   })
 }
 
-export async function listIntegrations() {
-  const payload = await request<{ integrations: IntegrationRecord[] }>('/api/v1/admin/integrations', {
-    auth: 'admin',
-  })
-
-  return payload.integrations
-}
-
-export async function createIntegration(input: {
-  allowed_hosts?: string[]
-  auth_config?: Record<string, unknown>
-  auth_strategy?: IntegrationRecord['auth_strategy']
-  base_url_env_var: string
-  default_headers?: Record<string, unknown>
-  description?: string
-  display_name: string
-  enabled?: boolean
-  key: string
-  metadata?: Record<string, unknown>
-  timeout_ms?: number
-  transport?: 'http'
-}) {
-  return request<IntegrationRecord>('/api/v1/admin/integrations', {
-    auth: 'admin',
-    body: JSON.stringify({
-      transport: 'http',
-      ...input,
-    }),
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-  })
-}
-
 export async function listTools() {
   const payload = await request<{ tools: ToolRecord[] }>('/api/v1/admin/tools', {
     auth: 'admin',
@@ -597,8 +541,6 @@ export async function listTools() {
 
 export async function createTool(input: {
   enabled?: boolean
-  integration_id?: string
-  integration_key?: string
   name: string
   planner_visible?: boolean
 }) {

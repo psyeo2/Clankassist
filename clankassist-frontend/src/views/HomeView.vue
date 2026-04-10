@@ -18,10 +18,6 @@
 
           <div class="metric-strip">
             <article class="metric-block">
-              <p class="metric-block__label">Integrations</p>
-              <p class="metric-block__value">{{ dashboard.integrationCount }}</p>
-            </article>
-            <article class="metric-block">
               <p class="metric-block__label">Tools</p>
               <p class="metric-block__value">
                 {{ dashboard.toolCount }}

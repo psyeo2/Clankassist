@@ -1,12 +1,10 @@
 import type { RequestHandler } from "express";
 
 import {
-  createIntegrationRecord,
   createResourceRecord,
   createResourceVersionRecord,
   createToolRecord,
   createToolVersionRecord,
-  listIntegrationRecords,
   listResourceRecords,
   listResourceVersionRecords,
   listToolRecords,
@@ -126,39 +124,51 @@ const getPublishSelector = (
   };
 };
 
-export const listIntegrations: RequestHandler = async (_request, response): Promise<void> => {
-  const integrations = await listIntegrationRecords();
-  handleResponse(response, 200, "Ok", { integrations });
-};
-
 export const listTools: RequestHandler = async (_request, response): Promise<void> => {
-  const mcpTools = await mcpClient.listTools();
-  
-  const tools = mcpTools.map((tool) => ({
-    id: `mcp-${tool.name}`,
-    name: tool.name,
-    integration_id: "",
-    integration_key: "",
-    integration_display_name: "MCP Built-in",
-    current_published_version_id: null,
-    published_version_number: null,
-    enabled: true,
-    planner_visible: !tool.name.startsWith("system."),
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }));
-  
+  const [mcpTools, dbTools] = await Promise.all([mcpClient.listTools(), listToolRecords()]);
+  const now = new Date().toISOString();
+  const mcpByName = new Map(mcpTools.map((tool) => [tool.name, tool]));
+
+  const merged = dbTools.map((tool) => {
+    const inMcp = mcpByName.has(tool.name);
+
+    return {
+      ...tool,
+      in_mcp: inMcp,
+      immutable: false,
+      source: "db",
+    };
+  });
+
+  const mcpOnly = mcpTools
+    .filter((tool) => !dbTools.some((dbTool) => dbTool.name === tool.name))
+    .map((tool) => ({
+      id: `mcp-${tool.name}`,
+      name: tool.name,
+      current_published_version_id: null,
+      published_version_number: null,
+      enabled: true,
+      planner_visible: !tool.name.startsWith("system."),
+      created_at: now,
+      updated_at: now,
+      in_mcp: true,
+      immutable: tool.name.startsWith("system."),
+      source: "mcp",
+    }));
+
+  const tools = [...mcpOnly, ...merged];
+
   handleResponse(response, 200, "Ok", { tools });
 };
 
 export const listToolVersions: RequestHandler = async (request, response): Promise<void> => {
   const toolId = request.params.toolId as string | undefined;
-  
+
   if (toolId?.startsWith("mcp-")) {
     handleResponse(response, 200, "Ok", { versions: [] });
     return;
   }
-  
+
   const versions = await listToolVersionRecords(getIntegerParam(toolId, "toolId"));
   handleResponse(response, 200, "Ok", { versions });
 };
@@ -178,52 +188,10 @@ export const listResourceVersions: RequestHandler = async (
   handleResponse(response, 200, "Ok", { versions });
 };
 
-export const createIntegration: RequestHandler = async (request, response): Promise<void> => {
-  const body = isRecord(request.body) ? request.body : {};
-  const transport = getString(body.transport, "transport", { required: true });
-  const authStrategy = getString(body.auth_strategy, "auth_strategy");
-
-  if (transport !== "http") {
-    throw new HttpError(400, "Field 'transport' must be 'http'.");
-  }
-
-  if (
-    authStrategy !== undefined &&
-    authStrategy !== "none" &&
-    authStrategy !== "bearer_env" &&
-    authStrategy !== "api_key_header_env" &&
-    authStrategy !== "api_key_query_env" &&
-    authStrategy !== "basic_env"
-  ) {
-    throw new HttpError(400, "Field 'auth_strategy' is invalid.");
-  }
-
-  const integration = await createIntegrationRecord({
-    key: getString(body.key, "key", { required: true }) as string,
-    displayName: getString(body.display_name, "display_name", { required: true }) as string,
-    description: getString(body.description, "description", { allowEmpty: true }),
-    transport,
-    baseUrlEnvVar: getString(body.base_url_env_var, "base_url_env_var", {
-      required: true,
-    }) as string,
-    authStrategy: authStrategy ?? "none",
-    authConfig: getJsonObject(body.auth_config, "auth_config"),
-    defaultHeaders: getJsonObject(body.default_headers, "default_headers"),
-    allowedHosts: getStringArray(body.allowed_hosts, "allowed_hosts"),
-    timeoutMs: getPositiveInteger(body.timeout_ms, "timeout_ms"),
-    metadata: getJsonObject(body.metadata, "metadata"),
-    enabled: getBoolean(body.enabled, "enabled"),
-  });
-
-  handleResponse(response, 201, "Integration created", integration);
-};
-
 export const createTool: RequestHandler = async (request, response): Promise<void> => {
   const body = isRecord(request.body) ? request.body : {};
   const tool = await createToolRecord({
     name: getString(body.name, "name", { required: true }) as string,
-    integrationId: getString(body.integration_id, "integration_id"),
-    integrationKey: getString(body.integration_key, "integration_key"),
     enabled: getBoolean(body.enabled, "enabled"),
     plannerVisible: getBoolean(body.planner_visible, "planner_visible"),
   });

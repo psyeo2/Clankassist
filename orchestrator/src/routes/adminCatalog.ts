@@ -1,12 +1,10 @@
 import express from "express";
 
 import {
-  createIntegration,
   createResource,
   createResourceVersion,
   createTool,
   createToolVersion,
-  listIntegrations,
   listResources,
   listResourceVersions,
   listTools,
@@ -20,8 +18,6 @@ const router = express.Router();
 
 router.use(authenticateAdminSession);
 
-router.get("/admin/integrations", listIntegrations);
-router.post("/admin/integrations", createIntegration);
 router.get("/admin/tools", listTools);
 router.post("/admin/tools", createTool);
 router.get("/admin/tools/:toolId/versions", listToolVersions);

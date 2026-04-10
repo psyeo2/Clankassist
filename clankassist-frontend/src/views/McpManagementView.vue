@@ -5,16 +5,12 @@
         <p class="page__eyebrow">MCP management</p>
         <h1 class="page__title">Tool fabric</h1>
         <p class="page__lede">
-          Create integrations, stage tool and resource versions, and publish catalog entries to
-          the orchestrator database.
+          Stage tool and resource versions, then publish active catalog entries to the
+          orchestrator database.
         </p>
       </div>
 
       <div class="metric-strip page-mcp__summary">
-        <article class="metric-block">
-          <p class="metric-block__label">Integrations</p>
-          <p class="metric-block__value">{{ integrations.length }}</p>
-        </article>
         <article class="metric-block">
           <p class="metric-block__label">Tools</p>
           <p class="metric-block__value">{{ tools.length }}</p>
@@ -49,96 +45,8 @@
     </div>
 
     <template v-else>
-      <section v-if="activeTab === 'integrations'" class="page-mcp__workspace">
-        <aside class="panel">
-          <div class="section-heading">
-            <AppIcon icon="cloud-line" />
-            <span class="section-heading__title">Current integrations</span>
-          </div>
-
-          <div class="stack-list">
-            <article v-for="integration in integrations" :key="integration.id" class="stack-list__item">
-              <div class="stack-list__title-row">
-                <h2 class="stack-list__title">{{ integration.display_name }}</h2>
-                <span class="status-pill" :class="integration.enabled ? 'status-pill--success' : 'status-pill--danger'">
-                  {{ integration.enabled ? 'enabled' : 'disabled' }}
-                </span>
-              </div>
-              <p class="muted-copy">{{ integration.key }} · {{ integration.base_url_env_var }}</p>
-              <p class="muted-copy">{{ integration.description || 'No description.' }}</p>
-            </article>
-          </div>
-        </aside>
-
-        <section class="panel">
-          <div class="section-heading">
-            <AppIcon icon="add-circle-line" />
-            <span class="section-heading__title">Create integration</span>
-          </div>
-
-          <form class="page-mcp__form" @submit.prevent="handleCreateIntegration">
-            <div class="field-grid">
-              <label class="field">
-                <span class="field__label">Key</span>
-                <input v-model="integrationForm.key" class="text-input" type="text" />
-              </label>
-
-              <label class="field">
-                <span class="field__label">Display name</span>
-                <input v-model="integrationForm.displayName" class="text-input" type="text" />
-              </label>
-
-              <label class="field">
-                <span class="field__label">Base URL env var</span>
-                <input v-model="integrationForm.baseUrlEnvVar" class="text-input" type="text" />
-              </label>
-
-              <label class="field">
-                <span class="field__label">Auth strategy</span>
-                <select v-model="integrationForm.authStrategy" class="select-input">
-                  <option value="none">none</option>
-                  <option value="bearer_env">bearer_env</option>
-                  <option value="api_key_header_env">api_key_header_env</option>
-                  <option value="api_key_query_env">api_key_query_env</option>
-                  <option value="basic_env">basic_env</option>
-                </select>
-              </label>
-
-              <label class="field">
-                <span class="field__label">Allowed hosts</span>
-                <input
-                  v-model="integrationForm.allowedHosts"
-                  class="text-input"
-                  placeholder="192.168.1.161:9400"
-                  type="text"
-                />
-              </label>
-
-              <label class="field">
-                <span class="field__label">Timeout ms</span>
-                <input v-model.number="integrationForm.timeoutMs" class="text-input" type="number" />
-              </label>
-
-              <label class="field field--span-2">
-                <span class="field__label">Description</span>
-                <textarea v-model="integrationForm.description" class="text-area"></textarea>
-              </label>
-
-              <label class="field field--span-2">
-                <span class="field__label">Auth config (JSON)</span>
-                <textarea v-model="integrationForm.authConfig" class="text-area"></textarea>
-              </label>
-            </div>
-
-            <button class="action-button action-button--primary" :disabled="isBusy" type="submit">
-              Create integration
-            </button>
-          </form>
-        </section>
-      </section>
-
-      <section v-else-if="activeTab === 'tools'" class="page-mcp__workspace">
-        <aside class="panel">
+      <section v-if="activeTab === 'tools'" class="page-mcp__workspace">
+        <aside v-if="tools.length > 0" class="panel">
           <div class="section-heading">
             <AppIcon icon="database-2-line" />
             <span class="section-heading__title">Current tools</span>
@@ -157,7 +65,7 @@
                   <AppIcon icon="add-fill" size="14" />
                 </span>
               </span>
-              <span class="muted-copy">Create a tool from an integration</span>
+              <span class="muted-copy">Create a tool with version-owned execution</span>
             </button>
             <button
               v-for="tool in tools"
@@ -169,14 +77,14 @@
             >
               <span class="page-mcp__selection-header">
                 <strong>{{ tool.name }}</strong>
-                <span
-                  class="status-pill"
-                  :class="tool.published_version_number ? 'status-pill--success' : 'status-pill--warning'"
-                >
-                  {{ tool.published_version_number ? `v${tool.published_version_number}` : 'unpublished' }}
+                <span class="page-mcp__selection-pills">
+                  <span class="status-pill" :class="toolStatusClass(tool)">
+                    {{ toolStatusLabel(tool) }}
+                  </span>
+                  <span v-if="tool.immutable" class="status-pill status-pill--info">default</span>
                 </span>
               </span>
-              <span class="muted-copy">{{ tool.integration_display_name }}</span>
+              <span class="muted-copy">Tool definition</span>
             </button>
           </div>
         </aside>
@@ -193,16 +101,6 @@
                 <label class="field">
                   <span class="field__label">Tool name</span>
                   <input v-model="toolForm.name" class="text-input" type="text" />
-                </label>
-
-                <label class="field">
-                  <span class="field__label">Integration</span>
-                  <select v-model="toolForm.integrationId" class="select-input">
-                    <option value="">Select integration</option>
-                    <option v-for="integration in integrations" :key="integration.id" :value="integration.id">
-                      {{ integration.display_name }}
-                    </option>
-                  </select>
                 </label>
               </div>
 
@@ -222,11 +120,6 @@
               <div class="field">
                 <span class="field__label">Tool name</span>
                 <div class="field-value">{{ selectedTool.name }}</div>
-              </div>
-
-              <div class="field">
-                <span class="field__label">Integration</span>
-                <div class="field-value">{{ selectedTool.integration_display_name }}</div>
               </div>
             </div>
           </section>
@@ -459,34 +352,29 @@ import { computed, onMounted, reactive, ref } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import {
-  createIntegration,
   createResource,
   createResourceVersion,
   createTool,
   createToolVersion,
-  listIntegrations,
   listResources,
   listResourceVersions,
   listTools,
   listToolVersions,
   publishResourceVersion,
   publishToolVersion,
-  type IntegrationRecord,
   type ResourceRecord,
   type ResourceVersionRecord,
   type ToolRecord,
   type ToolVersionRecord,
 } from '@/lib/api'
 
-type TabId = 'integrations' | 'resources' | 'tools'
+type TabId = 'resources' | 'tools'
 
 const tabs: Array<{ id: TabId; label: string }> = [
-  { id: 'integrations', label: 'Integrations' },
   { id: 'tools', label: 'Tools' },
   { id: 'resources', label: 'Resources' },
 ]
 
-const integrations = ref<IntegrationRecord[]>([])
 const isBusy = ref(false)
 const isLoading = ref(true)
 const errorMessage = ref('')
@@ -504,20 +392,8 @@ const selectedResource = computed(
   () => resources.value.find((resource) => resource.id === selectedResourceId.value) ?? null,
 )
 
-const integrationForm = reactive({
-  key: '',
-  displayName: '',
-  baseUrlEnvVar: '',
-  authStrategy: 'none' as IntegrationRecord['auth_strategy'],
-  allowedHosts: '',
-  timeoutMs: 10000,
-  description: '',
-  authConfig: '{}',
-})
-
 const toolForm = reactive({
   name: '',
-  integrationId: '',
 })
 
 const toolVersionForm = reactive({
@@ -567,14 +443,36 @@ function statusClass(status: string) {
   return `status-pill status-pill--${tone}`
 }
 
+function toolStatusClass(tool: ToolRecord) {
+  if (tool.in_mcp === false) {
+    return 'status-pill--danger'
+  }
+
+  if (tool.published_version_number !== null) {
+    return 'status-pill--success'
+  }
+
+  return 'status-pill--info'
+}
+
+function toolStatusLabel(tool: ToolRecord) {
+  if (tool.in_mcp === false) {
+    return 'unavailable'
+  }
+
+  if (tool.published_version_number !== null) {
+    return `v${tool.published_version_number}`
+  }
+
+  return 'available'
+}
+
 async function refreshCatalog() {
-  const [nextIntegrations, nextTools, nextResources] = await Promise.all([
-    listIntegrations(),
+  const [nextTools, nextResources] = await Promise.all([
     listTools(),
     listResources(),
   ])
 
-  integrations.value = nextIntegrations
   tools.value = nextTools
   resources.value = nextResources
 
@@ -633,37 +531,10 @@ async function withAction(action: () => Promise<void>, successText: string) {
   }
 }
 
-async function handleCreateIntegration() {
-  await withAction(async () => {
-    await createIntegration({
-      key: integrationForm.key.trim(),
-      display_name: integrationForm.displayName.trim(),
-      description: integrationForm.description.trim(),
-      base_url_env_var: integrationForm.baseUrlEnvVar.trim(),
-      auth_strategy: integrationForm.authStrategy,
-      auth_config: parseJson(integrationForm.authConfig, 'Auth config'),
-      allowed_hosts: integrationForm.allowedHosts
-        .split(',')
-        .map((value) => value.trim())
-        .filter((value) => value !== ''),
-      timeout_ms: integrationForm.timeoutMs,
-    })
-
-    integrationForm.key = ''
-    integrationForm.displayName = ''
-    integrationForm.baseUrlEnvVar = ''
-    integrationForm.description = ''
-    integrationForm.authConfig = '{}'
-    integrationForm.allowedHosts = ''
-    await refreshCatalog()
-  }, 'Integration created.')
-}
-
 async function handleCreateTool() {
   await withAction(async () => {
     const created = await createTool({
       name: toolForm.name.trim(),
-      integration_id: toolForm.integrationId,
     })
 
     toolForm.name = ''
@@ -673,12 +544,13 @@ async function handleCreateTool() {
 }
 
 async function handleCreateToolVersion() {
-  if (!selectedToolId.value) {
+  const toolId = selectedToolId.value
+  if (!toolId) {
     return
   }
 
   await withAction(async () => {
-    await createToolVersion(selectedToolId.value, {
+    await createToolVersion(toolId, {
       description: toolVersionForm.description.trim(),
       execution_summary: toolVersionForm.executionSummary.trim(),
       input_schema: parseJson(toolVersionForm.inputSchema, 'Input schema'),
@@ -693,12 +565,13 @@ async function handleCreateToolVersion() {
 }
 
 async function handlePublishToolVersion(versionNumber: number) {
-  if (!selectedToolId.value) {
+  const toolId = selectedToolId.value
+  if (!toolId) {
     return
   }
 
   await withAction(async () => {
-    await publishToolVersion(selectedToolId.value, {
+    await publishToolVersion(toolId, {
       version_number: versionNumber,
     })
 
@@ -825,6 +698,12 @@ onMounted(async () => {
   display: flex;
   gap: 0.75rem;
   justify-content: space-between;
+}
+
+.page-mcp__selection-pills {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.35rem;
 }
 
 .page-mcp__version-list {
