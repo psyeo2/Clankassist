@@ -1,10 +1,16 @@
-import { getBearerTokenByPrefix, markBearerTokenUsed } from "../db/bearerTokens.js";
-import { verifyBearerToken } from "./token.js";
+import { getAppAuthState } from "../db/appAuthState.js";
+import { getDeviceTokenByPrefix, markDeviceTokenUsed } from "../db/deviceTokens.js";
+import { verifyOpaqueToken } from "./token.js";
 import { HttpError } from "../utils/errors.js";
 
-export const authenticateBearerHeader = async (
+export const authenticateDeviceHeader = async (
   authHeader: string | undefined,
-): Promise<{ id: string; prefix: string; name: string; status: string }> => {
+): Promise<{ id: string; prefix: string; name: string; status: string; deviceId: string }> => {
+  const state = await getAppAuthState();
+  if (!state.setup_completed_at) {
+    throw new HttpError(503, "Initial setup is required.");
+  }
+
   if (!authHeader) {
     throw new HttpError(401, "Unauthorised: Missing authorisation header");
   }
@@ -19,7 +25,7 @@ export const authenticateBearerHeader = async (
     throw new HttpError(401, "Unauthorised: Invalid bearer token format");
   }
 
-  const tokenRecord = await getBearerTokenByPrefix(prefix);
+  const tokenRecord = await getDeviceTokenByPrefix(prefix);
   if (!tokenRecord) {
     throw new HttpError(401, "Unauthorised: Token not found");
   }
@@ -32,16 +38,17 @@ export const authenticateBearerHeader = async (
     throw new HttpError(401, "Unauthorised: Token is expired");
   }
 
-  if (!verifyBearerToken(key, tokenRecord.salt, tokenRecord.key_hash)) {
+  if (!verifyOpaqueToken(key, tokenRecord.salt, tokenRecord.key_hash)) {
     throw new HttpError(401, "Unauthorised: Token could not be verified");
   }
 
-  await markBearerTokenUsed(tokenRecord.id);
+  await markDeviceTokenUsed(tokenRecord.id);
 
   return {
     id: tokenRecord.id,
     prefix: tokenRecord.prefix,
     name: tokenRecord.name,
     status: tokenRecord.status,
+    deviceId: tokenRecord.device_id,
   };
 };

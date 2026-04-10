@@ -76,19 +76,29 @@ A hard-coded default password such as `adminadmin` is not recommended.
 
 Preferred model:
 
-- on first startup, there is no admin user yet
-- orchestrator allows a one-time bootstrap setup flow
-- setup is protected by a bootstrap secret from env, for example `BOOTSTRAP_ADMIN_PASSWORD`
+- on first startup, there is no completed admin setup yet
+- orchestrator allows a one-time setup flow
 - the first admin user sets the real password in the GUI
-- after setup, bootstrap login is disabled
+- after setup, the setup route is no longer usable for creating the initial password again
 
-If a temporary default admin password is used during development, it should be treated as development-only and replaced immediately during first-run setup.
+Current implementation note:
+
+- this is currently implemented as a singleton application auth state row, not a full multi-user admin table
+- setup completion is derived from stored password hash state
+- if setup has not been completed yet, normal app routes are blocked
 
 ### Admin sessions
 
 Admin login should create an admin session token or similar server-issued credential.
 
 That session is then used for `/api/v1/admin/*` routes.
+
+Current implementation note:
+
+- admin access uses bearer session tokens issued after login
+- access and refresh tokens are stored hashed in `admin_sessions`
+- `POST /api/v1/admin/refresh` rotates the session
+- `POST /api/v1/admin/logout-all` invalidates all existing admin refresh chains
 
 ### Device tokens
 
@@ -107,12 +117,16 @@ Suggested route split:
 
 ### Admin routes
 
+- `GET /api/v1/admin/setup/status`
 - `POST /api/v1/admin/setup`
 - `POST /api/v1/admin/login`
-- `GET /api/v1/admin/devices/discovered`
-- `POST /api/v1/admin/devices/discover`
-- `POST /api/v1/admin/devices/:id/approve`
-- `POST /api/v1/admin/devices/:id/reject`
+- `POST /api/v1/admin/refresh`
+- `POST /api/v1/admin/logout`
+- `POST /api/v1/admin/logout-all`
+- `GET /api/v1/admin/devices`
+- `POST /api/v1/admin/devices`
+- `GET /api/v1/admin/devices/:id`
+- `POST /api/v1/admin/devices/:id/tokens`
 - `POST /api/v1/admin/integrations`
 - `POST /api/v1/admin/tools`
 - `POST /api/v1/admin/tools/:toolId/versions`
@@ -120,6 +134,12 @@ Suggested route split:
 - `POST /api/v1/admin/resources`
 - `POST /api/v1/admin/resources/:resourceId/versions`
 - `POST /api/v1/admin/resources/:resourceId/publish`
+
+Current implementation note:
+
+- auth and device-token issuance routes exist now
+- catalog-management routes exist as protected stubs
+- discovery, approve, and reject routes are still future work
 
 ### Device routes
 
@@ -256,13 +276,17 @@ Devices may not:
 
 The auth and discovery model likely needs more structure than a single generic token table.
 
-Target entities should include at least:
+Current implemented entities:
 
-- `admin_users`
+- `app_auth_state`
 - `admin_sessions`
 - `devices`
 - `device_tokens`
+
+Future likely entities:
+
 - `device_discovery_events`
+- optional richer admin-user model if multi-user admin support is needed later
 
 Device tokens should be tied to a device record rather than treated as generic user-style API keys.
 

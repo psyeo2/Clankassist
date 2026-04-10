@@ -1,7 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 
-import { authenticateBearerHeader } from "../helpers/bearerAuth.js";
-import { HttpError } from "../utils/errors.js";
+import { authenticateDeviceHeader } from "../helpers/deviceAuth.js";
 
 export const authenticateBearerToken = async (
   request: Request,
@@ -9,7 +8,7 @@ export const authenticateBearerToken = async (
   next: NextFunction,
 ): Promise<void> => {
   try {
-    response.locals.authToken = await authenticateBearerHeader(request.headers.authorization);
+    response.locals.authToken = await authenticateDeviceHeader(request.headers.authorization);
     next();
   } catch (error) {
     next(error);

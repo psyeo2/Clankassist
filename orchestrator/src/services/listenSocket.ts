@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import type http from "node:http";
 import type { Duplex } from "node:stream";
 
-import { authenticateBearerHeader } from "../helpers/bearerAuth.js";
+import { getAppAuthState } from "../db/appAuthState.js";
+import { authenticateDeviceHeader } from "../helpers/deviceAuth.js";
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -49,7 +50,13 @@ export const handleListenUpgrade = async (
   }
 
   try {
-    await authenticateBearerHeader(
+    const state = await getAppAuthState();
+    if (!state.setup_completed_at) {
+      rejectUpgrade(socket, 503, "Initial setup is required");
+      return true;
+    }
+
+    await authenticateDeviceHeader(
       typeof request.headers.authorization === "string"
         ? request.headers.authorization
         : undefined,

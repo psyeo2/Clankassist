@@ -32,7 +32,13 @@ Current scope:
 
 ## Auth
 
-All API routes require `Authorization: Bearer <token>` except `/api/v1/auth/tokens/*`, which is protected by `x-admin-key: <ADMIN_PASSWORD>`.
+Admin auth now uses password setup plus logged-in session tokens.
+
+- `GET /api/v1/admin/setup/status` reports whether setup is still required
+- `POST /api/v1/admin/setup` creates the initial admin password
+- `POST /api/v1/admin/login` returns admin access and refresh tokens
+- `/api/v1/admin/*` management routes require an admin bearer token
+- device-facing routes such as `/api/v1/respond` and `/api/v1/listen` require a device bearer token
 
 ## Examples
 
@@ -94,8 +100,6 @@ Piper passthrough:
 - `PG_USER`
 - `PG_PASSWORD`
 - `PG_DB`
-- `SECRET`
-- `ADMIN_PASSWORD`
 
 ## Scripts
 

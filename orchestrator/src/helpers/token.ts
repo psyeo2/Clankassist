@@ -1,55 +1,60 @@
 import crypto from "node:crypto";
-import dotenv from "dotenv";
 
-dotenv.config();
+const HASH_KEY_LENGTH = 64;
 
-const getSecret = (): string => {
-  const secret = process.env.SECRET?.trim();
-  if (!secret) {
-    throw new Error("SECRET must be set in .env");
-  }
+const hashValue = (value: string, salt: string): string =>
+  crypto.scryptSync(value, salt, HASH_KEY_LENGTH).toString("hex");
 
-  return secret;
-};
-
-export const generateBearerToken = (): {
+export const generateOpaqueToken = (prefix = "sk_diak_"): {
   userToken: string;
-  fullPrefix: string;
+  prefix: string;
   keyHash: string;
   salt: string;
 } => {
-  const prefix = "sk_diak_";
   const reference = crypto.randomBytes(8).toString("hex");
   const fullPrefix = prefix + reference;
   const key = crypto.randomBytes(32).toString("hex");
   const salt = crypto.randomBytes(16).toString("hex");
-  const saltedKey = `${salt}/${key}`;
-  const keyHash = crypto
-    .createHash("sha256")
-    .update(saltedKey + getSecret())
-    .digest("hex");
+  const keyHash = hashValue(key, salt);
 
   return {
     userToken: `${fullPrefix}.${key}`,
-    fullPrefix,
+    prefix: fullPrefix,
     keyHash,
     salt,
   };
 };
 
-export const verifyBearerToken = (
+export const verifyOpaqueToken = (
   plainKey: string,
   salt: string,
   storedHash: string,
 ): boolean => {
-  const saltedKey = `${salt}/${plainKey}`;
-  const keyHash = crypto
-    .createHash("sha256")
-    .update(saltedKey + getSecret())
-    .digest("hex");
+  const keyHash = hashValue(plainKey, salt);
 
-  return crypto.timingSafeEqual(
-    Buffer.from(keyHash, "hex"),
-    Buffer.from(storedHash, "hex"),
-  );
+  const left = Buffer.from(keyHash, "hex");
+  const right = Buffer.from(storedHash, "hex");
+
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(left, right);
 };
+
+export const createPasswordHash = (
+  password: string,
+): { passwordHash: string; passwordSalt: string } => {
+  const passwordSalt = crypto.randomBytes(16).toString("hex");
+
+  return {
+    passwordHash: hashValue(password, passwordSalt),
+    passwordSalt,
+  };
+};
+
+export const verifyPassword = (
+  password: string,
+  passwordSalt: string,
+  storedHash: string,
+): boolean => verifyOpaqueToken(password, passwordSalt, storedHash);

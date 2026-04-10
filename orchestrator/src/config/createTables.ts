@@ -118,8 +118,67 @@ const statements: string[] = [
     );
   `,
   `
-    CREATE TABLE IF NOT EXISTS bearer_tokens (
+    CREATE TABLE IF NOT EXISTS app_auth_state (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      setup_completed_at TIMESTAMPTZ,
+      password_hash TEXT,
+      password_salt TEXT,
+      password_updated_at TIMESTAMPTZ,
+      refresh_token_version INTEGER NOT NULL DEFAULT 1 CHECK (refresh_token_version > 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CHECK (
+        (setup_completed_at IS NULL AND password_hash IS NULL AND password_salt IS NULL)
+        OR
+        (setup_completed_at IS NOT NULL AND password_hash IS NOT NULL AND password_salt IS NOT NULL)
+      )
+    );
+  `,
+  `
+    INSERT INTO app_auth_state (id)
+    VALUES (1)
+    ON CONFLICT (id) DO NOTHING;
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS admin_sessions (
       id BIGSERIAL PRIMARY KEY,
+      access_prefix TEXT NOT NULL UNIQUE,
+      access_key_hash TEXT NOT NULL UNIQUE,
+      access_salt TEXT NOT NULL,
+      refresh_prefix TEXT NOT NULL UNIQUE,
+      refresh_key_hash TEXT NOT NULL UNIQUE,
+      refresh_salt TEXT NOT NULL,
+      refresh_version INTEGER NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active', 'revoked', 'expired')),
+      last_used_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      access_expires_at TIMESTAMPTZ NOT NULL,
+      refresh_expires_at TIMESTAMPTZ NOT NULL,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS devices (
+      id BIGSERIAL PRIMARY KEY,
+      device_key TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'approved'
+        CHECK (status IN ('pending', 'approved', 'rejected', 'revoked')),
+      capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      last_seen_at TIMESTAMPTZ,
+      approved_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `,
+  `
+    CREATE TABLE IF NOT EXISTS device_tokens (
+      id BIGSERIAL PRIMARY KEY,
+      device_id BIGINT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
       prefix TEXT NOT NULL UNIQUE,
       key_hash TEXT NOT NULL UNIQUE,
       salt TEXT NOT NULL,
@@ -174,8 +233,20 @@ const statements: string[] = [
       ON resource_versions (resource_id, status);
   `,
   `
-    CREATE INDEX IF NOT EXISTS idx_bearer_tokens_status
-      ON bearer_tokens (status);
+    CREATE INDEX IF NOT EXISTS idx_device_tokens_status
+      ON device_tokens (status);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS idx_device_tokens_device_id
+      ON device_tokens (device_id);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS idx_admin_sessions_status
+      ON admin_sessions (status);
+  `,
+  `
+    CREATE INDEX IF NOT EXISTS idx_devices_status
+      ON devices (status);
   `,
   `
     CREATE OR REPLACE VIEW published_tool_catalog AS
