@@ -146,6 +146,20 @@
 
           <div class="stack-list">
             <button
+              class="page-mcp__selection-button page-mcp__selection-button--new"
+              :class="{ 'is-active': selectedToolId === null }"
+              type="button"
+              @click="selectNewTool"
+            >
+              <span class="page-mcp__selection-header">
+                <strong>New tool</strong>
+                <span class="page-mcp__new-tool-pill" aria-hidden="true">
+                  <AppIcon icon="add-fill" size="14" />
+                </span>
+              </span>
+              <span class="muted-copy">Create a tool from an integration</span>
+            </button>
+            <button
               v-for="tool in tools"
               :key="tool.id"
               class="page-mcp__selection-button"
@@ -168,7 +182,7 @@
         </aside>
 
         <div class="page-mcp__column">
-          <section class="panel">
+          <section v-if="selectedToolId === null" class="panel">
             <div class="section-heading">
               <AppIcon icon="add-circle-line" />
               <span class="section-heading__title">Create tool</span>
@@ -198,13 +212,32 @@
             </form>
           </section>
 
+          <section v-else class="panel">
+            <div class="section-heading">
+              <AppIcon icon="tool-line" />
+              <span class="section-heading__title">Selected tool</span>
+            </div>
+
+            <div v-if="selectedTool" class="field-grid">
+              <div class="field">
+                <span class="field__label">Tool name</span>
+                <div class="field-value">{{ selectedTool.name }}</div>
+              </div>
+
+              <div class="field">
+                <span class="field__label">Integration</span>
+                <div class="field-value">{{ selectedTool.integration_display_name }}</div>
+              </div>
+            </div>
+          </section>
+
           <section class="panel">
             <div class="section-heading">
               <AppIcon icon="settings-line" />
               <span class="section-heading__title">Selected tool versions</span>
             </div>
 
-            <template v-if="selectedTool">
+            <template v-if="selectedTool && selectedToolId !== null">
               <div class="stack-list page-mcp__version-list">
                 <article v-for="version in toolVersions" :key="version.id" class="stack-list__item">
                   <div class="stack-list__title-row">
@@ -463,7 +496,7 @@ const toolVersions = ref<ToolVersionRecord[]>([])
 const resources = ref<ResourceRecord[]>([])
 const resourceVersions = ref<ResourceVersionRecord[]>([])
 const activeTab = ref<TabId>('tools')
-const selectedToolId = ref('')
+const selectedToolId = ref<string | null>(null)
 const selectedResourceId = ref('')
 
 const selectedTool = computed(() => tools.value.find((tool) => tool.id === selectedToolId.value) ?? null)
@@ -545,10 +578,6 @@ async function refreshCatalog() {
   tools.value = nextTools
   resources.value = nextResources
 
-  if (!selectedToolId.value && tools.value[0]) {
-    selectedToolId.value = tools.value[0].id
-  }
-
   if (!selectedResourceId.value && resources.value[0]) {
     selectedResourceId.value = resources.value[0].id
   }
@@ -572,6 +601,11 @@ async function refreshResourceVersions() {
   }
 
   resourceVersions.value = await listResourceVersions(selectedResourceId.value)
+}
+
+function selectNewTool() {
+  selectedToolId.value = null
+  toolVersions.value = []
 }
 
 async function selectTool(toolId: string) {
@@ -765,6 +799,22 @@ onMounted(async () => {
   text-align: left;
 }
 
+.page-mcp__selection-button--new {
+  display: grid;
+}
+
+.page-mcp__new-tool-pill {
+  align-items: center;
+  background: #1f9d55;
+  border: 1px solid #15803d;
+  border-radius: 0.35rem;
+  color: #ffffff;
+  display: inline-flex;
+  height: 1.5rem;
+  justify-content: center;
+  width: 1.5rem;
+}
+
 .page-mcp__selection-button.is-active,
 .page-mcp__selection-button:hover {
   border-color: var(--color-primary);
@@ -779,6 +829,14 @@ onMounted(async () => {
 
 .page-mcp__version-list {
   margin-bottom: 1rem;
+}
+
+.field-value {
+  padding: 0.625rem 0.75rem;
+  background: var(--color-surface-secondary, rgba(0, 0, 0, 0.04));
+  border: 1px solid var(--color-border);
+  border-radius: 0.375rem;
+  color: var(--color-text);
 }
 
 @media (max-width: 1080px) {
