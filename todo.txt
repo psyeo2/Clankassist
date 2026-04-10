@@ -1,0 +1,39 @@
+# To durationMs
+
+## 1. Add "helper" mode to MCP management interface
+
+When a tool is selected the "Selected tool versions" panel appears.
+
+The input schema, result schema, and execution spec fields are very confusing to an innocent user.
+
+There should be a toggle switch below "Description" and "Execution Summary" to enable "easy mode" or something similar.
+
+Easy mode should have several fields, such as type and properties for input and result schema, with formatting helpers, and url, auth, hosts, timeout, request, response, content for execution spec.
+
+Also, you should be able to see the current config of a tool by selecting the version it is set to. An already published versions should not have a "Publish version" button either.
+
+There is poor consistency in the tool tags. The `system` tools have available tag, but not in green. That should be green. The created tools don't have the available tag.
+
+## 2. Unavailable API handling
+
+If the API is unreachable, there is no point rendering most of every page. Should just display an API unreachable error, and not bother with the rest.
+
+## 3. MCP restarting
+
+When tools are added or modified, the MCP server needs to be restarted for changes to take effect. This should be made known, and a button should be created that can do this in the MCP management page.
+
+## 4. Manual API page
+
+The audio response box is rendered poorly - lots of empty space above it.
+
+## 5. General frontend design
+
+Why does it say "shell" everywhere? Ridiculous. And `Response pipeline lab` and `Local command deck` and `Field Roster` and `Tool fabric`?
+
+Even on pages with less content than the height, there is a tiny amount of scroll. I imagine this is some discrepancy between the view box and the field. (That makes no sense lol)
+
+The header and footer are nice, but stop too abruptly. It is jarring. They should either go the whole way across, or be more smoothly transitioned into the background.
+
+## 6. The Websocket
+
+Allow perpetual audio streaming to a websocket with wake word and VAD determining what gets sent to whisper, then responses sent back across the websocket.
