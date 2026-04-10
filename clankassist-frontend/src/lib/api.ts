@@ -22,7 +22,6 @@ type StoredSession = {
   refreshToken: string
 }
 
-const SETTINGS_STORAGE_KEY = 'clankassist.settings'
 const SESSION_STORAGE_KEY = 'clankassist.session'
 
 let refreshPromise: Promise<boolean> | null = null
@@ -30,10 +29,6 @@ let refreshPromise: Promise<boolean> | null = null
 export interface AuthState {
   isAuthenticated: boolean
   requiresPasswordSetup: boolean
-}
-
-export interface AppSettings {
-  apiBaseUrl: string
 }
 
 export interface DashboardData {
@@ -159,51 +154,7 @@ export interface DeviceRespondResult {
   text?: string
 }
 
-const readSettings = (): AppSettings => {
-  if (typeof window === 'undefined') {
-    return {
-      apiBaseUrl: getDefaultApiBaseUrl(),
-    }
-  }
-
-  const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY)
-  if (!raw) {
-    const defaults = {
-      apiBaseUrl: getDefaultApiBaseUrl(),
-    }
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(defaults))
-    return defaults
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<AppSettings>
-    return {
-      apiBaseUrl:
-        typeof parsed.apiBaseUrl === 'string' && parsed.apiBaseUrl.trim() !== ''
-          ? parsed.apiBaseUrl.replace(/\/+$/, '')
-          : getDefaultApiBaseUrl(),
-    }
-  } catch {
-    const defaults = {
-      apiBaseUrl: getDefaultApiBaseUrl(),
-    }
-    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(defaults))
-    return defaults
-  }
-}
-
-const writeSettings = (settings: AppSettings) => {
-  if (typeof window === 'undefined') {
-    return
-  }
-
-  window.localStorage.setItem(
-    SETTINGS_STORAGE_KEY,
-    JSON.stringify({
-      apiBaseUrl: settings.apiBaseUrl.replace(/\/+$/, ''),
-    }),
-  )
-}
+const readApiBaseUrl = () => getDefaultApiBaseUrl()
 
 const readSession = (): StoredSession | null => {
   if (typeof window === 'undefined') {
@@ -253,8 +204,7 @@ const clearSession = () => {
 }
 
 const joinApiUrl = (path: string) => {
-  const { apiBaseUrl } = readSettings()
-  const base = apiBaseUrl.replace(/\/+$/, '')
+  const base = readApiBaseUrl().replace(/\/+$/, '')
   return `${base}${path.startsWith('/') ? path : `/${path}`}`
 }
 
@@ -479,7 +429,7 @@ export async function getDashboardData(): Promise<DashboardData> {
   ])
 
   return {
-    apiBaseUrl: readSettings().apiBaseUrl,
+    apiBaseUrl: readApiBaseUrl(),
     deviceCount: devicesPayload.devices.length,
     approvedDeviceCount: devicesPayload.devices.filter((device) => device.status === 'approved').length,
     integrationCount: integrationsPayload.integrations.length,
@@ -802,15 +752,6 @@ export async function callDeviceRespondAudio(input: {
   }
 }
 
-export async function getSettings() {
-  return readSettings()
-}
-
-export async function saveSettings(settings: AppSettings) {
-  const normalised = {
-    apiBaseUrl: settings.apiBaseUrl.trim().replace(/\/+$/, ''),
-  }
-
-  writeSettings(normalised)
-  return normalised
+export async function getApiBaseUrl() {
+  return readApiBaseUrl()
 }

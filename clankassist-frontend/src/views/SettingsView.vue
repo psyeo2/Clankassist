@@ -4,12 +4,12 @@
       <div>
         <p class="page__eyebrow">Settings</p>
         <h1 class="page__title">Control surface</h1>
-        <p class="page__lede">Frontend-only settings for the admin shell.</p>
+        <p class="page__lede">Reference information for the admin shell.</p>
       </div>
     </header>
 
     <div v-if="isLoading" class="panel">
-      <p class="muted-copy">Loading settings.</p>
+      <p class="muted-copy">Loading control surface details.</p>
     </div>
 
     <template v-else>
@@ -21,15 +21,10 @@
           </div>
 
           <div class="field-grid">
-            <label class="field field--span-2">
+            <label class="field field--span-2 field--static">
               <span class="field__label">Base URL</span>
-              <input
-                v-model="settings.apiBaseUrl"
-                class="text-input text-input--disabled"
-                disabled
-                type="text"
-              />
-              <span class="field__hint">Temporarily disabled. Browser-stored API targeting will be revisited later.</span>
+              <div class="static-value">{{ apiBaseUrl }}</div>
+              <span class="field__hint">Set by <code>VITE_API_BASE_URL</code> in the frontend environment.</span>
             </label>
           </div>
         </section>
@@ -49,37 +44,28 @@
               <h2 class="stack-list__title">Device auth</h2>
               <p class="muted-copy">Device tokens are created through the Devices or Manual API pages.</p>
             </article>
+            <article class="stack-list__item">
+              <h2 class="stack-list__title">Local storage</h2>
+              <p class="muted-copy">Only the color palette and admin session tokens are persisted locally.</p>
+            </article>
           </div>
         </section>
-      </div>
-
-      <div class="action-row">
-        <button
-          class="action-button action-button--primary"
-          disabled
-          type="button"
-        >
-          Save settings
-        </button>
       </div>
     </template>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
-import { getSettings, type AppSettings } from '@/lib/api'
+import { getApiBaseUrl } from '@/lib/api'
 
-const settings = reactive<AppSettings>({
-  apiBaseUrl: '',
-})
-
+const apiBaseUrl = ref('')
 const isLoading = ref(true)
 
 onMounted(async () => {
-  Object.assign(settings, await getSettings())
+  apiBaseUrl.value = await getApiBaseUrl()
   isLoading.value = false
 })
 </script>
@@ -96,9 +82,16 @@ onMounted(async () => {
   font-size: 0.82rem;
 }
 
-.text-input--disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
+.field--static {
+  align-content: start;
+}
+
+.static-value {
+  background: rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--color-border);
+  min-height: 3rem;
+  padding: 0.75rem 0.85rem;
+  word-break: break-word;
 }
 
 @media (max-width: 980px) {
