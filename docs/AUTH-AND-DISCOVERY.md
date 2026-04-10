@@ -138,7 +138,7 @@ Suggested route split:
 Current implementation note:
 
 - auth and device-token issuance routes exist now
-- catalog-management routes exist as protected stubs
+- catalog create/version/publish routes exist now for integrations, tools, and resources
 - discovery, approve, and reject routes are still future work
 
 ### Device routes
