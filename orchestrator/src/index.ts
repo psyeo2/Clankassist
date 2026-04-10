@@ -4,11 +4,12 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 
+import { createAllTables } from "./config/createTables.js";
 import { errorHandler, logRequest, notFound } from "./middlewares/index.js";
 import { createRouter } from "./routes/index.js";
 import { handleListenUpgrade } from "./services/listenSocket.js";
 import { mcpClient } from "./services/mcpClient.js";
-import { logStartup } from "./utils/logger.js";
+import { logEvent, logStartup } from "./utils/logger.js";
 
 dotenv.config();
 
@@ -60,6 +61,14 @@ process.on("SIGTERM", () => {
 });
 
 async function main(): Promise<void> {
+  logEvent("schema_init_started", {
+    service: "postgres",
+  });
+  await createAllTables();
+  logEvent("schema_init_completed", {
+    service: "postgres",
+  });
+
   await mcpClient.connect();
 
   server.listen(port, () => {
