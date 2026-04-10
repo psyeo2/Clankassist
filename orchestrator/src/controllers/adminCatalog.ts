@@ -6,6 +6,11 @@ import {
   createResourceVersionRecord,
   createToolRecord,
   createToolVersionRecord,
+  listIntegrationRecords,
+  listResourceRecords,
+  listResourceVersionRecords,
+  listToolRecords,
+  listToolVersionRecords,
   publishResourceVersionRecord,
   publishToolVersionRecord,
 } from "../db/adminCatalog.js";
@@ -118,6 +123,36 @@ const getPublishSelector = (
     versionId,
     versionNumber,
   };
+};
+
+export const listIntegrations: RequestHandler = async (_request, response): Promise<void> => {
+  const integrations = await listIntegrationRecords();
+  handleResponse(response, 200, "Ok", { integrations });
+};
+
+export const listTools: RequestHandler = async (_request, response): Promise<void> => {
+  const tools = await listToolRecords();
+  handleResponse(response, 200, "Ok", { tools });
+};
+
+export const listToolVersions: RequestHandler = async (request, response): Promise<void> => {
+  const versions = await listToolVersionRecords(getIntegerParam(request.params.toolId, "toolId"));
+  handleResponse(response, 200, "Ok", { versions });
+};
+
+export const listResources: RequestHandler = async (_request, response): Promise<void> => {
+  const resources = await listResourceRecords();
+  handleResponse(response, 200, "Ok", { resources });
+};
+
+export const listResourceVersions: RequestHandler = async (
+  request,
+  response,
+): Promise<void> => {
+  const versions = await listResourceVersionRecords(
+    getIntegerParam(request.params.resourceId, "resourceId"),
+  );
+  handleResponse(response, 200, "Ok", { versions });
 };
 
 export const createIntegration: RequestHandler = async (request, response): Promise<void> => {

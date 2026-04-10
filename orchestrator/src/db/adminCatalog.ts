@@ -366,6 +366,18 @@ export const createIntegrationRecord = async (
   return result.rows[0];
 };
 
+export const listIntegrationRecords = async (): Promise<IntegrationRecord[]> => {
+  const result = await query<IntegrationRecord>(
+    `
+      SELECT *
+      FROM integrations
+      ORDER BY created_at DESC, id DESC
+    `,
+  );
+
+  return result.rows;
+};
+
 export const createToolRecord = async (input: ToolInput): Promise<ToolRecord> =>
   withTransaction(async (client) => {
     const integrationId = await resolveIntegrationId(client, input);
@@ -390,6 +402,40 @@ export const createToolRecord = async (input: ToolInput): Promise<ToolRecord> =>
 
     return result.rows[0];
   });
+
+export const listToolRecords = async (): Promise<
+  Array<
+    ToolRecord & {
+      integration_key: string;
+      integration_display_name: string;
+      published_version_number: number | null;
+    }
+  >
+> => {
+  const result = await query<
+    ToolRecord & {
+      integration_key: string;
+      integration_display_name: string;
+      published_version_number: number | null;
+    }
+  >(
+    `
+      SELECT
+        t.*,
+        i.key AS integration_key,
+        i.display_name AS integration_display_name,
+        tv.version_number AS published_version_number
+      FROM tools t
+      INNER JOIN integrations i
+        ON i.id = t.integration_id
+      LEFT JOIN tool_versions tv
+        ON tv.id = t.current_published_version_id
+      ORDER BY t.created_at DESC, t.id DESC
+    `,
+  );
+
+  return result.rows;
+};
 
 export const createToolVersionRecord = async (
   toolId: string,
@@ -435,6 +481,20 @@ export const createToolVersionRecord = async (
 
     return result.rows[0];
   });
+
+export const listToolVersionRecords = async (toolId: string): Promise<ToolVersionRecord[]> => {
+  const result = await query<ToolVersionRecord>(
+    `
+      SELECT *
+      FROM tool_versions
+      WHERE tool_id = $1
+      ORDER BY version_number DESC
+    `,
+    [toolId],
+  );
+
+  return result.rows;
+};
 
 export const publishToolVersionRecord = async (
   toolId: string,
@@ -550,6 +610,24 @@ export const createResourceRecord = async (input: ResourceInput): Promise<Resour
   return result.rows[0];
 };
 
+export const listResourceRecords = async (): Promise<
+  Array<ResourceRecord & { published_version_number: number | null }>
+> => {
+  const result = await query<Array<ResourceRecord & { published_version_number: number | null }>[number]>(
+    `
+      SELECT
+        r.*,
+        rv.version_number AS published_version_number
+      FROM resources r
+      LEFT JOIN resource_versions rv
+        ON rv.id = r.current_published_version_id
+      ORDER BY r.created_at DESC, r.id DESC
+    `,
+  );
+
+  return result.rows;
+};
+
 export const createResourceVersionRecord = async (
   resourceId: string,
   input: ResourceVersionInput,
@@ -590,6 +668,22 @@ export const createResourceVersionRecord = async (
 
     return result.rows[0];
   });
+
+export const listResourceVersionRecords = async (
+  resourceId: string,
+): Promise<ResourceVersionRecord[]> => {
+  const result = await query<ResourceVersionRecord>(
+    `
+      SELECT *
+      FROM resource_versions
+      WHERE resource_id = $1
+      ORDER BY version_number DESC
+    `,
+    [resourceId],
+  );
+
+  return result.rows;
+};
 
 export const publishResourceVersionRecord = async (
   resourceId: string,

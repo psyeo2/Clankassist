@@ -4,7 +4,7 @@
       <div>
         <p class="page__eyebrow">Settings</p>
         <h1 class="page__title">Control surface</h1>
-        <p class="page__lede">Shell-level defaults that should survive as the app grows.</p>
+        <p class="page__lede">Frontend-only settings for the admin shell.</p>
       </div>
     </header>
 
@@ -13,24 +13,23 @@
     </div>
 
     <template v-else>
-      <p v-if="saveMessage" class="inline-message inline-message--success">{{ saveMessage }}</p>
-
       <div class="page-settings__grid">
         <section class="panel">
           <div class="section-heading">
             <AppIcon icon="cloud-line" />
-            <span class="section-heading__title">API</span>
+            <span class="section-heading__title">API target</span>
           </div>
 
           <div class="field-grid">
             <label class="field field--span-2">
               <span class="field__label">Base URL</span>
-              <input v-model="settings.apiBaseUrl" class="text-input" type="text" />
-            </label>
-
-            <label class="field">
-              <span class="field__label">Discovery window (seconds)</span>
-              <input v-model.number="settings.discoveryWindowSeconds" class="text-input" type="number" />
+              <input
+                v-model="settings.apiBaseUrl"
+                class="text-input text-input--disabled"
+                disabled
+                type="text"
+              />
+              <span class="field__hint">Temporarily disabled. Browser-stored API targeting will be revisited later.</span>
             </label>
           </div>
         </section>
@@ -38,24 +37,28 @@
         <section class="panel">
           <div class="section-heading">
             <AppIcon icon="settings-2-line" />
-            <span class="section-heading__title">Behaviour</span>
+            <span class="section-heading__title">Notes</span>
           </div>
 
           <div class="stack-list">
-            <label class="stack-list__item toggle-row">
-              <input v-model="settings.allowRemoteMcp" type="checkbox" />
-              <span>Allow remote MCP bridges</span>
-            </label>
-            <label class="stack-list__item toggle-row">
-              <input v-model="settings.motionEnabled" type="checkbox" />
-              <span>Keep interface motion enabled</span>
-            </label>
+            <article class="stack-list__item">
+              <h2 class="stack-list__title">Admin auth</h2>
+              <p class="muted-copy">This frontend uses admin bearer session tokens from the orchestrator.</p>
+            </article>
+            <article class="stack-list__item">
+              <h2 class="stack-list__title">Device auth</h2>
+              <p class="muted-copy">Device tokens are created through the Devices or Manual API pages.</p>
+            </article>
           </div>
         </section>
       </div>
 
       <div class="action-row">
-        <button class="action-button action-button--primary" :disabled="isSaving" type="button" @click="handleSave">
+        <button
+          class="action-button action-button--primary"
+          disabled
+          type="button"
+        >
           Save settings
         </button>
       </div>
@@ -67,31 +70,13 @@
 import { onMounted, reactive, ref } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
-import { getSettings, saveSettings, type AppSettings } from '@/lib/api'
+import { getSettings, type AppSettings } from '@/lib/api'
 
 const settings = reactive<AppSettings>({
   apiBaseUrl: '',
-  discoveryWindowSeconds: 30,
-  allowRemoteMcp: false,
-  motionEnabled: true,
 })
 
 const isLoading = ref(true)
-const isSaving = ref(false)
-const saveMessage = ref('')
-
-async function handleSave() {
-  isSaving.value = true
-  saveMessage.value = ''
-
-  try {
-    const savedSettings = await saveSettings({ ...settings })
-    Object.assign(settings, savedSettings)
-    saveMessage.value = 'Settings saved.'
-  } finally {
-    isSaving.value = false
-  }
-}
 
 onMounted(async () => {
   Object.assign(settings, await getSettings())
@@ -104,6 +89,16 @@ onMounted(async () => {
   display: grid;
   gap: 1.25rem;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.field__hint {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+}
+
+.text-input--disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 @media (max-width: 980px) {

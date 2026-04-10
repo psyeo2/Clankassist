@@ -61,6 +61,7 @@ const navLinks = [
   { icon: 'home-2-line', label: 'Overview', to: { name: 'home' } },
   { icon: 'database-2-line', label: 'MCP', to: { name: 'mcp' } },
   { icon: 'battery-2-line', label: 'Devices', to: { name: 'devices' } },
+  { icon: 'play-circle-line', label: 'Manual API', to: { name: 'manual' } },
 ] as const
 
 function isActiveRoute(name: string) {

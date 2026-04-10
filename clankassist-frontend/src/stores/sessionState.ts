@@ -41,6 +41,7 @@ function applyPaletteVariables(paletteId: string) {
 export const useSessionState = defineStore('sessionState', () => {
   const isInitialized = ref(false)
   const isAuthenticated = ref(false)
+  const initializationError = ref('')
   const requiresPasswordSetup = ref(false)
   const paletteId = ref(getStoredPaletteId())
   const isDevBypassEnabled = isDevAuthBypassEnabled()
@@ -67,16 +68,26 @@ export const useSessionState = defineStore('sessionState', () => {
 
     if (isDevBypassEnabled) {
       isAuthenticated.value = true
+      initializationError.value = ''
       requiresPasswordSetup.value = false
       isInitialized.value = true
       return
     }
 
-    const authState = await getAuthState()
+    try {
+      const authState = await getAuthState()
 
-    isAuthenticated.value = authState.isAuthenticated
-    requiresPasswordSetup.value = authState.requiresPasswordSetup
-    isInitialized.value = true
+      isAuthenticated.value = authState.isAuthenticated
+      initializationError.value = ''
+      requiresPasswordSetup.value = authState.requiresPasswordSetup
+    } catch (error) {
+      initializationError.value =
+        error instanceof Error ? error.message : 'Unable to reach the orchestrator.'
+      isAuthenticated.value = false
+      requiresPasswordSetup.value = false
+    } finally {
+      isInitialized.value = true
+    }
   }
 
   async function setPassword(password: string) {
@@ -89,6 +100,7 @@ export const useSessionState = defineStore('sessionState', () => {
     const authState = await createPassword(password)
 
     isAuthenticated.value = authState.isAuthenticated
+    initializationError.value = ''
     requiresPasswordSetup.value = authState.requiresPasswordSetup
   }
 
@@ -102,6 +114,7 @@ export const useSessionState = defineStore('sessionState', () => {
     const authState = await loginWithPassword(password)
 
     isAuthenticated.value = authState.isAuthenticated
+    initializationError.value = ''
     requiresPasswordSetup.value = authState.requiresPasswordSetup
   }
 
@@ -121,6 +134,7 @@ export const useSessionState = defineStore('sessionState', () => {
     currentPalette,
     ensureInitialized,
     hasAccess,
+    initializationError,
     isDevBypassEnabled,
     isAuthenticated,
     isInitialized,

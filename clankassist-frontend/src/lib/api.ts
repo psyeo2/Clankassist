@@ -1,568 +1,816 @@
-export type ApiHealth = 'online' | 'degraded' | 'offline'
-export type DeviceStatus = 'online' | 'idle' | 'offline' | 'warning'
-export type McpStatus = 'ready' | 'draft' | 'error'
-export type TransportType = 'stdio' | 'http' | 'ws'
-export type ScopeType = 'local' | 'team' | 'sandbox'
-export type InteractionTone = 'success' | 'warning' | 'error' | 'info'
+import { getDefaultApiBaseUrl } from '@/lib/env'
+
+type ApiEnvelope<T> = {
+  status: number
+  message: string
+  data: T
+}
+
+type AuthKind = 'admin' | 'none'
+
+type RequestOptions = {
+  auth?: AuthKind
+  body?: BodyInit | null
+  headers?: HeadersInit
+  method?: string
+  parseAs?: 'blob' | 'json' | 'text'
+  retryOnUnauthorized?: boolean
+}
+
+type StoredSession = {
+  accessToken: string
+  refreshToken: string
+}
+
+const SETTINGS_STORAGE_KEY = 'clankassist.settings'
+const SESSION_STORAGE_KEY = 'clankassist.session'
+
+let refreshPromise: Promise<boolean> | null = null
 
 export interface AuthState {
   isAuthenticated: boolean
   requiresPasswordSetup: boolean
 }
 
-export interface DeviceRecord {
-  id: string
-  name: string
-  category: string
-  status: DeviceStatus
-  battery: number
-  connection: string
-  location: string
-  notes: string
-  lastSeen: string
-}
-
-export interface McpToolRecord {
-  id: string
-  name: string
-  tool: string
-  transport: TransportType
-  scope: ScopeType
-  status: McpStatus
-  command: string
-  endpoint: string
-  notes: string
-  lastEdited: string
-}
-
-export interface RecentInteraction {
-  id: string
-  title: string
-  detail: string
-  time: string
-  tone: InteractionTone
-}
-
-export interface ApiSnapshot {
-  status: ApiHealth
-  latencyMs: number
-  endpoint: string
-  lastSync: string
-}
-
 export interface AppSettings {
   apiBaseUrl: string
-  discoveryWindowSeconds: number
-  allowRemoteMcp: boolean
-  motionEnabled: boolean
 }
 
 export interface DashboardData {
-  api: ApiSnapshot
-  devices: DeviceRecord[]
-  recentInteractions: RecentInteraction[]
-  toolSummary: {
-    ready: number
-    draft: number
-    error: number
-  }
-  tools: McpToolRecord[]
+  apiBaseUrl: string
+  deviceCount: number
+  approvedDeviceCount: number
+  integrationCount: number
+  publishedResourceCount: number
+  publishedToolCount: number
+  resourceCount: number
+  toolCount: number
 }
 
-export interface McpWorkspace {
-  templates: Array<{
-    description: string
-    endpointHint: string
+export interface AdminDeviceRecord {
+  id: string
+  device_key: string
+  name: string
+  status: 'approved' | 'pending' | 'rejected' | 'revoked'
+  capabilities: unknown[]
+  metadata: Record<string, unknown>
+  last_seen_at: string | null
+  approved_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface CreatedDeviceToken {
+  token: {
     id: string
-    label: string
-    recommendedCommand: string
-    transport: TransportType
-  }>
-  tools: McpToolRecord[]
+    device_id: string
+    prefix: string
+    name: string
+    created_by: string
+    status: string
+    last_used_at: string | null
+    revoked_at: string | null
+    expires_at: string | null
+    metadata: Record<string, unknown>
+    created_at: string
+    updated_at: string
+  }
+  bearer_token: string
 }
 
-export interface DeviceWorkspace {
-  devices: DeviceRecord[]
-  discoveryPool: DeviceRecord[]
+export interface IntegrationRecord {
+  id: string
+  key: string
+  display_name: string
+  description: string
+  transport: 'http'
+  base_url_env_var: string
+  auth_strategy: 'none' | 'bearer_env' | 'api_key_header_env' | 'api_key_query_env' | 'basic_env'
+  auth_config: Record<string, unknown>
+  default_headers: Record<string, unknown>
+  allowed_hosts: unknown[]
+  timeout_ms: number
+  metadata: Record<string, unknown>
+  enabled: boolean
+  created_at: string
+  updated_at: string
 }
 
-interface PersistedState {
-  api: ApiSnapshot
-  devices: DeviceRecord[]
-  discoveryPool: DeviceRecord[]
-  password: string | null
-  recentInteractions: RecentInteraction[]
-  settings: AppSettings
-  tools: McpToolRecord[]
+export interface ToolRecord {
+  id: string
+  name: string
+  integration_id: string
+  integration_key: string
+  integration_display_name: string
+  current_published_version_id: string | null
+  published_version_number: number | null
+  enabled: boolean
+  planner_visible: boolean
+  created_at: string
+  updated_at: string
 }
 
-const STORAGE_KEY = 'clankassist.mock.api'
-
-const defaultState: PersistedState = {
-  password: null,
-  api: {
-    status: 'online',
-    latencyMs: 38,
-    endpoint: 'http://localhost:6001',
-    lastSync: '14 seconds ago',
-  },
-  devices: [
-    {
-      id: 'device-ember',
-      name: 'Workshop Deck',
-      category: 'Controller',
-      status: 'online',
-      battery: 91,
-      connection: 'USB-C',
-      location: 'Bench A',
-      notes: 'Primary rig with recording profile loaded.',
-      lastSeen: 'Live now',
-    },
-    {
-      id: 'device-quill',
-      name: 'Pocket Relay',
-      category: 'Handheld',
-      status: 'idle',
-      battery: 64,
-      connection: 'Wi-Fi',
-      location: 'Field kit',
-      notes: 'Ready for sync jobs and quick playback checks.',
-      lastSeen: '3 min ago',
-    },
-    {
-      id: 'device-torque',
-      name: 'Stage Brick',
-      category: 'Audio node',
-      status: 'warning',
-      battery: 27,
-      connection: 'Bluetooth',
-      location: 'Studio 2',
-      notes: 'Battery trending low after last test cycle.',
-      lastSeen: '1 min ago',
-    },
-  ],
-  discoveryPool: [
-    {
-      id: 'device-lattice',
-      name: 'Lattice Sensor',
-      category: 'Sensor',
-      status: 'online',
-      battery: 88,
-      connection: 'Wi-Fi',
-      location: 'Loading bay',
-      notes: 'Recently seen on the local mesh.',
-      lastSeen: 'fresh signal',
-    },
-    {
-      id: 'device-rivet',
-      name: 'Rivet Beacon',
-      category: 'Beacon',
-      status: 'idle',
-      battery: 72,
-      connection: 'Bluetooth',
-      location: 'Storage lane',
-      notes: 'Broadcasting maintenance tags only.',
-      lastSeen: 'queued for pairing',
-    },
-  ],
-  tools: [
-    {
-      id: 'tool-local-shell',
-      name: 'Local Shell Bridge',
-      tool: 'Command Runner',
-      transport: 'stdio',
-      scope: 'local',
-      status: 'ready',
-      command: 'node ./mcp/shell-bridge.js',
-      endpoint: '',
-      notes: 'Runs local command macros and device scripts.',
-      lastEdited: 'today, 09:14',
-    },
-    {
-      id: 'tool-cloud-cache',
-      name: 'Cloud Cache Probe',
-      tool: 'HTTP Probe',
-      transport: 'http',
-      scope: 'team',
-      status: 'draft',
-      command: '',
-      endpoint: 'https://cache.internal.local/mcp',
-      notes: 'Used for remote cache inspection and warm-up checks.',
-      lastEdited: 'today, 08:41',
-    },
-    {
-      id: 'tool-telemetry',
-      name: 'Telemetry Stream',
-      tool: 'Event Stream',
-      transport: 'ws',
-      scope: 'sandbox',
-      status: 'error',
-      command: '',
-      endpoint: 'wss://telemetry.internal/ws',
-      notes: 'Socket auth token expired on last run.',
-      lastEdited: 'yesterday, 18:52',
-    },
-  ],
-  recentInteractions: [
-    {
-      id: 'interaction-1',
-      title: 'Device sweep completed',
-      detail: 'Three units responded, one new beacon identified.',
-      time: '8 min ago',
-      tone: 'success',
-    },
-    {
-      id: 'interaction-2',
-      title: 'HTTP probe degraded',
-      detail: 'Cloud Cache Probe exceeded the expected latency budget.',
-      time: '14 min ago',
-      tone: 'warning',
-    },
-    {
-      id: 'interaction-3',
-      title: 'Playback macro archived',
-      detail: 'Last operator session was preserved for review.',
-      time: '36 min ago',
-      tone: 'info',
-    },
-  ],
-  settings: {
-    apiBaseUrl: 'http://localhost:6001',
-    discoveryWindowSeconds: 45,
-    allowRemoteMcp: true,
-    motionEnabled: true,
-  },
+export interface ToolVersionRecord {
+  id: string
+  tool_id: string
+  version_number: number
+  description: string
+  input_schema: Record<string, unknown>
+  result_schema: Record<string, unknown>
+  execution_summary: string | null
+  execution_mode: 'http'
+  execution_spec: Record<string, unknown>
+  metadata: Record<string, unknown>
+  status: 'draft' | 'validated' | 'published' | 'archived'
+  created_at: string
+  updated_at: string
 }
 
-const mcpTemplates: McpWorkspace['templates'] = [
-  {
-    id: 'command-runner',
-    label: 'Command Runner',
-    description: 'Wrap a local script or binary as an MCP tool.',
-    recommendedCommand: 'node ./mcp/tool.js',
-    endpointHint: '',
-    transport: 'stdio',
-  },
-  {
-    id: 'http-bridge',
-    label: 'HTTP Bridge',
-    description: 'Proxy a REST or RPC service through a single MCP endpoint.',
-    recommendedCommand: '',
-    endpointHint: 'https://service.internal/mcp',
-    transport: 'http',
-  },
-  {
-    id: 'event-stream',
-    label: 'Event Stream',
-    description: 'Attach to a live websocket for telemetry or control events.',
-    recommendedCommand: '',
-    endpointHint: 'wss://service.internal/ws',
-    transport: 'ws',
-  },
-]
-
-function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T
+export interface ResourceRecord {
+  id: string
+  uri: string
+  name: string
+  mime_type: string | null
+  description: string
+  current_published_version_id: string | null
+  published_version_number: number | null
+  enabled: boolean
+  created_at: string
+  updated_at: string
 }
 
-function createId(prefix: string) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`
+export interface ResourceVersionRecord {
+  id: string
+  resource_id: string
+  version_number: number
+  text_content: string | null
+  load_mode: 'static' | 'http'
+  load_spec: Record<string, unknown>
+  metadata: Record<string, unknown>
+  status: 'draft' | 'validated' | 'published' | 'archived'
+  created_at: string
+  updated_at: string
 }
 
-function delay<T>(value: T, ms = 180): Promise<T> {
-  return new Promise((resolve) => {
-    window.setTimeout(() => resolve(clone(value)), ms)
-  })
+export interface DeviceRespondResult {
+  audioUrl?: string
+  contentType: string
+  json?: unknown
+  text?: string
 }
 
-function readState() {
+const readSettings = (): AppSettings => {
   if (typeof window === 'undefined') {
-    return clone(defaultState)
+    return {
+      apiBaseUrl: getDefaultApiBaseUrl(),
+    }
   }
 
-  const rawState = window.localStorage.getItem(STORAGE_KEY)
-
-  if (!rawState) {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultState))
-    return clone(defaultState)
+  const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY)
+  if (!raw) {
+    const defaults = {
+      apiBaseUrl: getDefaultApiBaseUrl(),
+    }
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(defaults))
+    return defaults
   }
 
   try {
+    const parsed = JSON.parse(raw) as Partial<AppSettings>
     return {
-      ...clone(defaultState),
-      ...JSON.parse(rawState),
-    } as PersistedState
+      apiBaseUrl:
+        typeof parsed.apiBaseUrl === 'string' && parsed.apiBaseUrl.trim() !== ''
+          ? parsed.apiBaseUrl.replace(/\/+$/, '')
+          : getDefaultApiBaseUrl(),
+    }
   } catch {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(defaultState))
-    return clone(defaultState)
+    const defaults = {
+      apiBaseUrl: getDefaultApiBaseUrl(),
+    }
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(defaults))
+    return defaults
   }
 }
 
-function writeState(nextState: PersistedState) {
+const writeSettings = (settings: AppSettings) => {
   if (typeof window === 'undefined') {
     return
   }
 
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState))
+  window.localStorage.setItem(
+    SETTINGS_STORAGE_KEY,
+    JSON.stringify({
+      apiBaseUrl: settings.apiBaseUrl.replace(/\/+$/, ''),
+    }),
+  )
 }
 
-function appendInteraction(state: PersistedState, interaction: Omit<RecentInteraction, 'id'>) {
-  state.recentInteractions.unshift({
-    id: createId('interaction'),
-    ...interaction,
+const readSession = (): StoredSession | null => {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const raw = window.localStorage.getItem(SESSION_STORAGE_KEY)
+  if (!raw) {
+    return null
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<StoredSession>
+    if (
+      typeof parsed.accessToken === 'string' &&
+      parsed.accessToken &&
+      typeof parsed.refreshToken === 'string' &&
+      parsed.refreshToken
+    ) {
+      return {
+        accessToken: parsed.accessToken,
+        refreshToken: parsed.refreshToken,
+      }
+    }
+  } catch {
+    // ignore and clear below
+  }
+
+  window.localStorage.removeItem(SESSION_STORAGE_KEY)
+  return null
+}
+
+const writeSession = (session: StoredSession) => {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session))
+}
+
+const clearSession = () => {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  window.localStorage.removeItem(SESSION_STORAGE_KEY)
+}
+
+const joinApiUrl = (path: string) => {
+  const { apiBaseUrl } = readSettings()
+  const base = apiBaseUrl.replace(/\/+$/, '')
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`
+}
+
+const extractErrorMessage = async (response: Response): Promise<string> => {
+  const contentType = response.headers.get('content-type') ?? ''
+
+  try {
+    if (contentType.includes('application/json')) {
+      const payload = (await response.json()) as ApiEnvelope<Record<string, unknown> | null>
+      return payload.message || 'Request failed.'
+    }
+
+    const text = await response.text()
+    return text || 'Request failed.'
+  } catch {
+    return `Request failed with status ${response.status}.`
+  }
+}
+
+const refreshAdminSession = async (): Promise<boolean> => {
+  const session = readSession()
+  if (!session?.refreshToken) {
+    clearSession()
+    return false
+  }
+
+  if (!refreshPromise) {
+    refreshPromise = (async () => {
+      try {
+        const response = await fetch(joinApiUrl('/api/v1/admin/refresh'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            refresh_token: session.refreshToken,
+          }),
+        })
+
+        if (!response.ok) {
+          clearSession()
+          return false
+        }
+
+        const payload = (await response.json()) as ApiEnvelope<{
+          access_token: string
+          refresh_token: string
+        }>
+
+        writeSession({
+          accessToken: payload.data.access_token,
+          refreshToken: payload.data.refresh_token,
+        })
+
+        return true
+      } catch {
+        clearSession()
+        return false
+      } finally {
+        refreshPromise = null
+      }
+    })()
+  }
+
+  return refreshPromise
+}
+
+const request = async <T>(path: string, options: RequestOptions = {}): Promise<T> => {
+  const session = readSession()
+  const headers = new Headers(options.headers)
+
+  if (options.auth === 'admin' && session?.accessToken) {
+    headers.set('Authorization', `Bearer ${session.accessToken}`)
+  }
+
+  const response = await fetch(joinApiUrl(path), {
+    method: options.method ?? 'GET',
+    headers,
+    body: options.body,
   })
 
-  state.recentInteractions = state.recentInteractions.slice(0, 6)
+  if (response.status === 401 && options.auth === 'admin' && options.retryOnUnauthorized !== false) {
+    const refreshed = await refreshAdminSession()
+    if (refreshed) {
+      return request<T>(path, {
+        ...options,
+        retryOnUnauthorized: false,
+      })
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response))
+  }
+
+  const parseAs = options.parseAs ?? 'json'
+
+  if (parseAs === 'blob') {
+    return (await response.blob()) as T
+  }
+
+  if (parseAs === 'text') {
+    return (await response.text()) as T
+  }
+
+  const payload = (await response.json()) as ApiEnvelope<T>
+  return payload.data
 }
 
 export async function getAuthState(): Promise<AuthState> {
-  const state = readState()
+  const setup = await request<{ setup_completed_at: string | null; setup_required: boolean }>(
+    '/api/v1/admin/setup/status',
+    {
+      auth: 'none',
+    },
+  )
 
-  return delay({
-    isAuthenticated: false,
-    requiresPasswordSetup: !state.password,
-  }, 120)
+  if (setup.setup_required) {
+    clearSession()
+    return {
+      isAuthenticated: false,
+      requiresPasswordSetup: true,
+    }
+  }
+
+  const session = readSession()
+  if (!session?.accessToken) {
+    return {
+      isAuthenticated: false,
+      requiresPasswordSetup: false,
+    }
+  }
+
+  try {
+    await request<{ devices: AdminDeviceRecord[] }>('/api/v1/admin/devices', {
+      auth: 'admin',
+    })
+
+    return {
+      isAuthenticated: true,
+      requiresPasswordSetup: false,
+    }
+  } catch {
+    clearSession()
+    return {
+      isAuthenticated: false,
+      requiresPasswordSetup: false,
+    }
+  }
 }
 
 export async function createPassword(password: string): Promise<AuthState> {
-  if (password.trim().length < 4) {
-    throw new Error('Use at least four characters for the shell password.')
-  }
-
-  const state = readState()
-
-  if (state.password) {
-    throw new Error('A password is already configured for this shell.')
-  }
-
-  state.password = password
-
-  appendInteraction(state, {
-    title: 'Password initialized',
-    detail: 'Initial operator access was configured locally.',
-    time: 'now',
-    tone: 'success',
+  const payload = await request<{
+    access_token: string
+    refresh_token: string
+  }>('/api/v1/admin/setup', {
+    auth: 'none',
+    body: JSON.stringify({
+      password,
+      password_confirmation: password,
+    }),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
   })
 
-  writeState(state)
+  writeSession({
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token,
+  })
 
-  return delay({
+  return {
     isAuthenticated: true,
     requiresPasswordSetup: false,
-  }, 220)
+  }
 }
 
 export async function loginWithPassword(password: string): Promise<AuthState> {
-  const state = readState()
-
-  if (!state.password) {
-    throw new Error('No password exists yet. Use the first-run setup flow.')
-  }
-
-  if (state.password !== password) {
-    throw new Error('Incorrect password.')
-  }
-
-  appendInteraction(state, {
-    title: 'Operator authenticated',
-    detail: 'Access granted to the local command deck.',
-    time: 'now',
-    tone: 'success',
+  const payload = await request<{
+    access_token: string
+    refresh_token: string
+  }>('/api/v1/admin/login', {
+    auth: 'none',
+    body: JSON.stringify({
+      password,
+    }),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
   })
 
-  writeState(state)
+  writeSession({
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token,
+  })
 
-  return delay({
+  return {
     isAuthenticated: true,
     requiresPasswordSetup: false,
-  }, 180)
+  }
 }
 
 export async function logoutSession() {
-  return delay(true, 80)
+  try {
+    await request<null>('/api/v1/admin/logout', {
+      auth: 'admin',
+      method: 'POST',
+    })
+  } finally {
+    clearSession()
+  }
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
-  const state = readState()
+  const [devicesPayload, integrationsPayload, toolsPayload, resourcesPayload] = await Promise.all([
+    request<{ devices: AdminDeviceRecord[] }>('/api/v1/admin/devices', { auth: 'admin' }),
+    request<{ integrations: IntegrationRecord[] }>('/api/v1/admin/integrations', { auth: 'admin' }),
+    request<{ tools: ToolRecord[] }>('/api/v1/admin/tools', { auth: 'admin' }),
+    request<{ resources: ResourceRecord[] }>('/api/v1/admin/resources', { auth: 'admin' }),
+  ])
 
-  return delay({
-    api: state.api,
-    devices: state.devices,
-    recentInteractions: state.recentInteractions,
-    tools: state.tools,
-    toolSummary: {
-      ready: state.tools.filter((tool) => tool.status === 'ready').length,
-      draft: state.tools.filter((tool) => tool.status === 'draft').length,
-      error: state.tools.filter((tool) => tool.status === 'error').length,
+  return {
+    apiBaseUrl: readSettings().apiBaseUrl,
+    deviceCount: devicesPayload.devices.length,
+    approvedDeviceCount: devicesPayload.devices.filter((device) => device.status === 'approved').length,
+    integrationCount: integrationsPayload.integrations.length,
+    toolCount: toolsPayload.tools.length,
+    publishedToolCount: toolsPayload.tools.filter((tool) => tool.published_version_number !== null).length,
+    resourceCount: resourcesPayload.resources.length,
+    publishedResourceCount: resourcesPayload.resources.filter(
+      (resource) => resource.published_version_number !== null,
+    ).length,
+  }
+}
+
+export async function listDevices() {
+  const payload = await request<{ devices: AdminDeviceRecord[] }>('/api/v1/admin/devices', {
+    auth: 'admin',
+  })
+
+  return payload.devices
+}
+
+export async function createDevice(input: {
+  capabilities?: string[]
+  device_key: string
+  metadata?: Record<string, unknown>
+  name: string
+  status?: 'approved' | 'pending' | 'rejected' | 'revoked'
+}) {
+  return request<AdminDeviceRecord>('/api/v1/admin/devices', {
+    auth: 'admin',
+    body: JSON.stringify(input),
+    headers: {
+      'Content-Type': 'application/json',
     },
+    method: 'POST',
   })
 }
 
-export async function getMcpWorkspace(): Promise<McpWorkspace> {
-  const state = readState()
-
-  return delay({
-    templates: mcpTemplates,
-    tools: state.tools,
-  })
-}
-
-export async function createMcpTool(input: Omit<McpToolRecord, 'id' | 'lastEdited'>) {
-  const state = readState()
-
-  const newTool: McpToolRecord = {
-    ...input,
-    id: createId('tool'),
-    lastEdited: 'now',
-  }
-
-  state.tools.unshift(newTool)
-  appendInteraction(state, {
-    title: `${newTool.name} created`,
-    detail: `New ${newTool.transport.toUpperCase()} tool staged in ${newTool.scope} scope.`,
-    time: 'now',
-    tone: 'info',
-  })
-  writeState(state)
-
-  return delay(newTool, 200)
-}
-
-export async function updateMcpTool(
-  toolId: string,
-  updates: Omit<McpToolRecord, 'id' | 'lastEdited'>,
-) {
-  const state = readState()
-  const index = state.tools.findIndex((tool) => tool.id === toolId)
-
-  if (index === -1) {
-    throw new Error('That MCP tool no longer exists.')
-  }
-
-  const existingTool = state.tools[index]
-
-  if (!existingTool) {
-    throw new Error('That MCP tool no longer exists.')
-  }
-
-  const nextTool: McpToolRecord = {
-    ...existingTool,
-    ...updates,
-    id: existingTool.id,
-    lastEdited: 'just now',
-  }
-
-  state.tools[index] = nextTool
-
-  appendInteraction(state, {
-    title: `${nextTool.name} updated`,
-    detail: `Configuration saved for the ${nextTool.tool} definition.`,
-    time: 'now',
-    tone: 'success',
-  })
-  writeState(state)
-
-  return delay(nextTool, 200)
-}
-
-export async function getDeviceWorkspace(): Promise<DeviceWorkspace> {
-  const state = readState()
-
-  return delay({
-    devices: state.devices,
-    discoveryPool: state.discoveryPool,
-  })
-}
-
-export async function discoverDevices() {
-  const state = readState()
-
-  if (state.discoveryPool.length > 0) {
-    const discovered = state.discoveryPool[0]
-
-    if (discovered) {
-      state.devices.unshift(discovered)
-      state.discoveryPool = state.discoveryPool.slice(1)
-
-      appendInteraction(state, {
-        title: `${discovered.name} paired`,
-        detail: `${discovered.category} promoted from discovery queue into the active roster.`,
-        time: 'now',
-        tone: 'success',
-      })
-    }
-  } else {
-    appendInteraction(state, {
-      title: 'Discovery sweep complete',
-      detail: 'No additional devices responded during this pass.',
-      time: 'now',
-      tone: 'info',
-    })
-  }
-
-  writeState(state)
-
-  return delay({
-    devices: state.devices,
-    discoveryPool: state.discoveryPool,
-  }, 260)
-}
-
-export async function updateDevice(
+export async function issueDeviceToken(
   deviceId: string,
-  updates: Omit<DeviceRecord, 'id' | 'battery' | 'connection' | 'category' | 'lastSeen'>,
+  input: {
+    expires_at?: string
+    metadata?: Record<string, unknown>
+    name?: string
+  } = {},
 ) {
-  const state = readState()
-  const index = state.devices.findIndex((device) => device.id === deviceId)
-
-  if (index === -1) {
-    throw new Error('That device no longer exists.')
-  }
-
-  const existingDevice = state.devices[index]
-
-  if (!existingDevice) {
-    throw new Error('That device no longer exists.')
-  }
-
-  const nextDevice: DeviceRecord = {
-    ...existingDevice,
-    ...updates,
-    id: existingDevice.id,
-    lastSeen: 'updated now',
-  }
-
-  state.devices[index] = nextDevice
-
-  appendInteraction(state, {
-    title: `${nextDevice.name} updated`,
-    detail: 'Device metadata saved to the local workspace.',
-    time: 'now',
-    tone: 'info',
+  return request<CreatedDeviceToken>(`/api/v1/admin/devices/${deviceId}/tokens`, {
+    auth: 'admin',
+    body: JSON.stringify(input),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
   })
-  writeState(state)
+}
 
-  return delay(nextDevice, 180)
+export async function listIntegrations() {
+  const payload = await request<{ integrations: IntegrationRecord[] }>('/api/v1/admin/integrations', {
+    auth: 'admin',
+  })
+
+  return payload.integrations
+}
+
+export async function createIntegration(input: {
+  allowed_hosts?: string[]
+  auth_config?: Record<string, unknown>
+  auth_strategy?: IntegrationRecord['auth_strategy']
+  base_url_env_var: string
+  default_headers?: Record<string, unknown>
+  description?: string
+  display_name: string
+  enabled?: boolean
+  key: string
+  metadata?: Record<string, unknown>
+  timeout_ms?: number
+  transport?: 'http'
+}) {
+  return request<IntegrationRecord>('/api/v1/admin/integrations', {
+    auth: 'admin',
+    body: JSON.stringify({
+      transport: 'http',
+      ...input,
+    }),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  })
+}
+
+export async function listTools() {
+  const payload = await request<{ tools: ToolRecord[] }>('/api/v1/admin/tools', {
+    auth: 'admin',
+  })
+
+  return payload.tools
+}
+
+export async function createTool(input: {
+  enabled?: boolean
+  integration_id?: string
+  integration_key?: string
+  name: string
+  planner_visible?: boolean
+}) {
+  return request<ToolRecord>('/api/v1/admin/tools', {
+    auth: 'admin',
+    body: JSON.stringify(input),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  })
+}
+
+export async function listToolVersions(toolId: string) {
+  const payload = await request<{ versions: ToolVersionRecord[] }>(
+    `/api/v1/admin/tools/${toolId}/versions`,
+    {
+      auth: 'admin',
+    },
+  )
+
+  return payload.versions
+}
+
+export async function createToolVersion(
+  toolId: string,
+  input: {
+    description: string
+    execution_spec?: Record<string, unknown>
+    execution_summary?: string | null
+    input_schema?: Record<string, unknown>
+    metadata?: Record<string, unknown>
+    result_schema?: Record<string, unknown>
+    status?: 'archived' | 'draft' | 'validated'
+  },
+) {
+  return request<ToolVersionRecord>(`/api/v1/admin/tools/${toolId}/versions`, {
+    auth: 'admin',
+    body: JSON.stringify(input),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  })
+}
+
+export async function publishToolVersion(toolId: string, input: { note?: string; version_id?: string; version_number?: number }) {
+  return request<{
+    action: 'publish' | 'rollback'
+    tool: ToolRecord
+    version: ToolVersionRecord
+  }>(`/api/v1/admin/tools/${toolId}/publish`, {
+    auth: 'admin',
+    body: JSON.stringify(input),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  })
+}
+
+export async function listResources() {
+  const payload = await request<{ resources: ResourceRecord[] }>('/api/v1/admin/resources', {
+    auth: 'admin',
+  })
+
+  return payload.resources
+}
+
+export async function createResource(input: {
+  description?: string
+  enabled?: boolean
+  mime_type?: string | null
+  name: string
+  uri: string
+}) {
+  return request<ResourceRecord>('/api/v1/admin/resources', {
+    auth: 'admin',
+    body: JSON.stringify(input),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  })
+}
+
+export async function listResourceVersions(resourceId: string) {
+  const payload = await request<{ versions: ResourceVersionRecord[] }>(
+    `/api/v1/admin/resources/${resourceId}/versions`,
+    {
+      auth: 'admin',
+    },
+  )
+
+  return payload.versions
+}
+
+export async function createResourceVersion(
+  resourceId: string,
+  input: {
+    blob_content_base64?: string
+    load_mode?: 'http' | 'static'
+    load_spec?: Record<string, unknown>
+    metadata?: Record<string, unknown>
+    status?: 'archived' | 'draft' | 'validated'
+    text_content?: string | null
+  },
+) {
+  return request<ResourceVersionRecord>(`/api/v1/admin/resources/${resourceId}/versions`, {
+    auth: 'admin',
+    body: JSON.stringify(input),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  })
+}
+
+export async function publishResourceVersion(
+  resourceId: string,
+  input: { note?: string; version_id?: string; version_number?: number },
+) {
+  return request<{
+    action: 'publish' | 'rollback'
+    resource: ResourceRecord
+    version: ResourceVersionRecord
+  }>(`/api/v1/admin/resources/${resourceId}/publish`, {
+    auth: 'admin',
+    body: JSON.stringify(input),
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    method: 'POST',
+  })
+}
+
+export async function callDeviceRespondText(input: {
+  deviceToken: string
+  output: 'audio' | 'json' | 'text'
+  text: string
+}): Promise<DeviceRespondResult> {
+  const response = await fetch(joinApiUrl(`/api/v1/respond?output=${input.output}`), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${input.deviceToken}`,
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+    body: input.text,
+  })
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response))
+  }
+
+  const contentType = response.headers.get('content-type') ?? 'application/octet-stream'
+
+  if (contentType.includes('application/json')) {
+    return {
+      contentType,
+      json: await response.json(),
+    }
+  }
+
+  if (contentType.startsWith('text/')) {
+    return {
+      contentType,
+      text: await response.text(),
+    }
+  }
+
+  const blob = await response.blob()
+  return {
+    audioUrl: URL.createObjectURL(blob),
+    contentType,
+  }
+}
+
+export async function callDeviceRespondAudio(input: {
+  deviceToken: string
+  file: File
+  output: 'audio' | 'json' | 'text'
+}): Promise<DeviceRespondResult> {
+  const formData = new FormData()
+  formData.append('file', input.file, input.file.name)
+
+  const response = await fetch(joinApiUrl(`/api/v1/respond?output=${input.output}`), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${input.deviceToken}`,
+    },
+    body: formData,
+  })
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response))
+  }
+
+  const contentType = response.headers.get('content-type') ?? 'application/octet-stream'
+
+  if (contentType.includes('application/json')) {
+    return {
+      contentType,
+      json: await response.json(),
+    }
+  }
+
+  if (contentType.startsWith('text/')) {
+    return {
+      contentType,
+      text: await response.text(),
+    }
+  }
+
+  const blob = await response.blob()
+  return {
+    audioUrl: URL.createObjectURL(blob),
+    contentType,
+  }
 }
 
 export async function getSettings() {
-  const state = readState()
-
-  return delay(state.settings, 120)
+  return readSettings()
 }
 
 export async function saveSettings(settings: AppSettings) {
-  const state = readState()
+  const normalised = {
+    apiBaseUrl: settings.apiBaseUrl.trim().replace(/\/+$/, ''),
+  }
 
-  state.settings = settings
-  state.api.endpoint = settings.apiBaseUrl
-  appendInteraction(state, {
-    title: 'Settings saved',
-    detail: `Shell configuration updated against ${settings.apiBaseUrl}.`,
-    time: 'now',
-    tone: 'success',
-  })
-  writeState(state)
-
-  return delay(state.settings, 180)
+  writeSettings(normalised)
+  return normalised
 }

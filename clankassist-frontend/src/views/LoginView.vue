@@ -7,8 +7,8 @@
         <p class="page__lede">
           {{
             isFirstRun
-              ? 'Set the local shell password before the command deck opens.'
-              : 'Enter the shell password to reopen the local workspace.'
+              ? 'Create the initial admin password before the control surface opens.'
+              : 'Enter the orchestrator admin password to reopen the workspace.'
           }}
         </p>
 
@@ -22,6 +22,10 @@
             <span class="field__label">Confirm password</span>
             <input v-model="confirmPassword" class="text-input" type="password" />
           </label>
+
+          <p v-if="sessionState.initializationError" class="inline-message inline-message--danger">
+            {{ sessionState.initializationError }}
+          </p>
 
           <p v-if="errorMessage" class="inline-message inline-message--danger">{{ errorMessage }}</p>
 
@@ -45,11 +49,11 @@
         <div class="stack-list">
           <article class="stack-list__item">
             <h2 class="stack-list__title">First-time flow</h2>
-            <p class="muted-copy">Stores a local password and immediately opens the shell.</p>
+            <p class="muted-copy">Calls the orchestrator setup route and stores admin session tokens.</p>
           </article>
           <article class="stack-list__item">
             <h2 class="stack-list__title">Repeat access</h2>
-            <p class="muted-copy">Checks the password through <code>lib/api.ts</code>.</p>
+            <p class="muted-copy">Authenticates through the orchestrator admin login endpoint.</p>
           </article>
           <article class="stack-list__item">
             <h2 class="stack-list__title">Palette access</h2>
