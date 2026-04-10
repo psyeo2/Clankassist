@@ -147,7 +147,7 @@ export interface ResourceVersionRecord {
   updated_at: string
 }
 
-export interface DeviceRespondResult {
+export interface RespondResult {
   audioUrl?: string
   contentType: string
   json?: unknown
@@ -312,6 +312,73 @@ const request = async <T>(path: string, options: RequestOptions = {}): Promise<T
 
   const payload = (await response.json()) as ApiEnvelope<T>
   return payload.data
+}
+
+const fetchWithAdminAuth = async (
+  path: string,
+  init: RequestInit,
+  retryOnUnauthorized = true,
+  throwOnHttpError = true,
+): Promise<Response> => {
+  const session = readSession()
+  const headers = new Headers(init.headers)
+
+  if (session?.accessToken) {
+    headers.set('Authorization', `Bearer ${session.accessToken}`)
+  }
+
+  const response = await fetch(joinApiUrl(path), {
+    ...init,
+    headers,
+  })
+
+  if (response.status === 401 && retryOnUnauthorized) {
+    const refreshed = await refreshAdminSession()
+    if (refreshed) {
+      return fetchWithAdminAuth(path, init, false)
+    }
+  }
+
+  if (throwOnHttpError && !response.ok) {
+    throw new Error(await extractErrorMessage(response))
+  }
+
+  return response
+}
+
+const parseRespondResponse = async (
+  response: Response,
+  expectedOutput?: 'audio' | 'json' | 'text',
+): Promise<RespondResult> => {
+  const contentType = response.headers.get('content-type') ?? 'application/octet-stream'
+
+  if (contentType.includes('application/json')) {
+    return {
+      contentType,
+      json: await response.json(),
+    }
+  }
+
+  if (expectedOutput === 'audio') {
+    const blob = await response.blob()
+    return {
+      audioUrl: URL.createObjectURL(blob),
+      contentType,
+    }
+  }
+
+  if (contentType.startsWith('text/')) {
+    return {
+      contentType,
+      text: await response.text(),
+    }
+  }
+
+  const blob = await response.blob()
+  return {
+    audioUrl: URL.createObjectURL(blob),
+    contentType,
+  }
 }
 
 export async function getAuthState(): Promise<AuthState> {
@@ -672,7 +739,7 @@ export async function callDeviceRespondText(input: {
   deviceToken: string
   output: 'audio' | 'json' | 'text'
   text: string
-}): Promise<DeviceRespondResult> {
+}): Promise<RespondResult> {
   const response = await fetch(joinApiUrl(`/api/v1/respond?output=${input.output}`), {
     method: 'POST',
     headers: {
@@ -686,34 +753,14 @@ export async function callDeviceRespondText(input: {
     throw new Error(await extractErrorMessage(response))
   }
 
-  const contentType = response.headers.get('content-type') ?? 'application/octet-stream'
-
-  if (contentType.includes('application/json')) {
-    return {
-      contentType,
-      json: await response.json(),
-    }
-  }
-
-  if (contentType.startsWith('text/')) {
-    return {
-      contentType,
-      text: await response.text(),
-    }
-  }
-
-  const blob = await response.blob()
-  return {
-    audioUrl: URL.createObjectURL(blob),
-    contentType,
-  }
+  return parseRespondResponse(response, input.output)
 }
 
 export async function callDeviceRespondAudio(input: {
   deviceToken: string
   file: File
   output: 'audio' | 'json' | 'text'
-}): Promise<DeviceRespondResult> {
+}): Promise<RespondResult> {
   const formData = new FormData()
   formData.append('file', input.file, input.file.name)
 
@@ -729,27 +776,37 @@ export async function callDeviceRespondAudio(input: {
     throw new Error(await extractErrorMessage(response))
   }
 
-  const contentType = response.headers.get('content-type') ?? 'application/octet-stream'
+  return parseRespondResponse(response, input.output)
+}
 
-  if (contentType.includes('application/json')) {
-    return {
-      contentType,
-      json: await response.json(),
-    }
-  }
+export async function callAdminTestRespondText(input: {
+  output: 'audio' | 'json' | 'text'
+  text: string
+}): Promise<RespondResult> {
+  const response = await fetchWithAdminAuth(`/api/v1/admin/test/respond?output=${input.output}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+    },
+    body: input.text,
+  }, true, false)
 
-  if (contentType.startsWith('text/')) {
-    return {
-      contentType,
-      text: await response.text(),
-    }
-  }
+  return parseRespondResponse(response, input.output)
+}
 
-  const blob = await response.blob()
-  return {
-    audioUrl: URL.createObjectURL(blob),
-    contentType,
-  }
+export async function callAdminTestRespondAudio(input: {
+  file: File
+  output: 'audio' | 'json' | 'text'
+}): Promise<RespondResult> {
+  const formData = new FormData()
+  formData.append('file', input.file, input.file.name)
+
+  const response = await fetchWithAdminAuth(`/api/v1/admin/test/respond?output=${input.output}`, {
+    method: 'POST',
+    body: formData,
+  }, true, false)
+
+  return parseRespondResponse(response, input.output)
 }
 
 export async function getApiBaseUrl() {

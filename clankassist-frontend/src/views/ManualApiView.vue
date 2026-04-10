@@ -3,10 +3,10 @@
     <header class="page__header">
       <div>
         <p class="page__eyebrow">Manual API</p>
-        <h1 class="page__title">Device request lab</h1>
+        <h1 class="page__title">Response pipeline lab</h1>
         <p class="page__lede">
-          Create a device bearer token, then test the device-facing `/respond` endpoint with text
-          or uploaded audio.
+          Use your current admin session to test the same orchestration path as `/respond` without
+          minting a device token.
         </p>
       </div>
     </header>
@@ -17,48 +17,24 @@
     <div class="page-manual__layout">
       <section class="panel">
         <div class="section-heading">
-          <AppIcon icon="battery-2-line" />
-          <span class="section-heading__title">Device token</span>
+          <AppIcon icon="shield-keyhole-line" />
+          <span class="section-heading__title">Session mode</span>
         </div>
 
-        <div class="field-grid">
-          <label class="field">
-            <span class="field__label">Device</span>
-            <select v-model="selectedDeviceId" class="select-input">
-              <option value="">Select device</option>
-              <option v-for="device in devices" :key="device.id" :value="device.id">
-                {{ device.name }} · {{ device.device_key }}
-              </option>
-            </select>
-          </label>
-
-          <div class="field">
-            <span class="field__label">Action</span>
-            <button
-              class="action-button action-button--primary"
-              :disabled="isBusy || !selectedDeviceId"
-              type="button"
-              @click="handleCreateDeviceToken"
-            >
-              Create device API key
-            </button>
-          </div>
-
-          <label class="field field--span-2">
-            <span class="field__label">Bearer token</span>
-            <textarea
-              v-model="deviceToken"
-              class="text-area"
-              placeholder="Bearer token appears here after creation, or paste one manually."
-            ></textarea>
-          </label>
-        </div>
+        <article class="stack-list__item">
+          <h2 class="stack-list__title">Admin-only test route</h2>
+          <p class="muted-copy">
+            Requests from this page go to <code>/api/v1/admin/test/respond</code> and use your
+            logged-in admin bearer session. Real edge devices should still use
+            <code>/api/v1/respond</code> with device bearer tokens.
+          </p>
+        </article>
       </section>
 
       <section class="panel">
         <div class="section-heading">
           <AppIcon icon="play-circle-line" />
-          <span class="section-heading__title">Call /respond</span>
+          <span class="section-heading__title">Call /admin/test/respond</span>
         </div>
 
         <div class="segmented-control">
@@ -93,7 +69,12 @@
 
             <label v-if="inputMode === 'audio'" class="field">
               <span class="field__label">Audio file</span>
-              <input class="text-input page-manual__file-input" type="file" accept="audio/*" @change="handleFileChange" />
+              <input
+                class="text-input page-manual__file-input"
+                type="file"
+                accept="audio/*"
+                @change="handleFileChange"
+              />
             </label>
 
             <label v-else class="field field--span-2">
@@ -144,16 +125,13 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
 import {
-  callDeviceRespondAudio,
-  callDeviceRespondText,
-  issueDeviceToken,
-  listDevices,
-  type AdminDeviceRecord,
-  type DeviceRespondResult,
+  callAdminTestRespondAudio,
+  callAdminTestRespondText,
+  type RespondResult,
 } from '@/lib/api'
 
 type InputMode = 'audio' | 'text'
@@ -164,14 +142,11 @@ type ResponseState =
   | { kind: 'json'; value: string }
   | { kind: 'text'; value: string }
 
-const devices = ref<AdminDeviceRecord[]>([])
-const deviceToken = ref('')
 const errorMessage = ref('')
 const inputMode = ref<InputMode>('text')
 const isBusy = ref(false)
 const outputType = ref<OutputType>('json')
 const responseState = ref<ResponseState>({ kind: 'empty', value: '' })
-const selectedDeviceId = ref('')
 const selectedFile = ref<File | null>(null)
 const successMessage = ref('')
 const textInput = ref('')
@@ -182,7 +157,7 @@ function revokeAudioUrl() {
   }
 }
 
-function setResponse(result: DeviceRespondResult) {
+function setResponse(result: RespondResult) {
   revokeAudioUrl()
 
   if (result.audioUrl) {
@@ -207,31 +182,6 @@ function setResponse(result: DeviceRespondResult) {
   }
 }
 
-async function refreshDevices() {
-  devices.value = await listDevices()
-  selectedDeviceId.value = devices.value[0]?.id ?? ''
-}
-
-async function handleCreateDeviceToken() {
-  if (!selectedDeviceId.value) {
-    return
-  }
-
-  isBusy.value = true
-  errorMessage.value = ''
-  successMessage.value = ''
-
-  try {
-    const token = await issueDeviceToken(selectedDeviceId.value)
-    deviceToken.value = token.bearer_token
-    successMessage.value = 'Device API key created.'
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Unable to create device API key.'
-  } finally {
-    isBusy.value = false
-  }
-}
-
 function handleFileChange(event: Event) {
   const target = event.target as HTMLInputElement
   selectedFile.value = target.files?.[0] ?? null
@@ -243,20 +193,14 @@ async function handleRunRequest() {
   successMessage.value = ''
 
   try {
-    const trimmedToken = deviceToken.value.trim()
-    if (!trimmedToken) {
-      throw new Error('Provide a device bearer token first.')
-    }
-
-    let result: DeviceRespondResult
+    let result: RespondResult
 
     if (inputMode.value === 'audio') {
       if (!selectedFile.value) {
         throw new Error('Select an audio file first.')
       }
 
-      result = await callDeviceRespondAudio({
-        deviceToken: trimmedToken,
+      result = await callAdminTestRespondAudio({
         file: selectedFile.value,
         output: outputType.value,
       })
@@ -265,8 +209,7 @@ async function handleRunRequest() {
         throw new Error('Enter some text first.')
       }
 
-      result = await callDeviceRespondText({
-        deviceToken: trimmedToken,
+      result = await callAdminTestRespondText({
         output: outputType.value,
         text: textInput.value.trim(),
       })
@@ -280,14 +223,6 @@ async function handleRunRequest() {
     isBusy.value = false
   }
 }
-
-onMounted(async () => {
-  try {
-    await refreshDevices()
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Unable to load devices.'
-  }
-})
 
 onBeforeUnmount(() => {
   revokeAudioUrl()

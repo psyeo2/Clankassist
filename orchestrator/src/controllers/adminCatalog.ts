@@ -14,6 +14,7 @@ import {
   publishResourceVersionRecord,
   publishToolVersionRecord,
 } from "../db/adminCatalog.js";
+import { mcpClient } from "../services/mcpClient.js";
 import { HttpError } from "../utils/errors.js";
 import { handleResponse } from "../utils/response.js";
 
@@ -131,12 +132,34 @@ export const listIntegrations: RequestHandler = async (_request, response): Prom
 };
 
 export const listTools: RequestHandler = async (_request, response): Promise<void> => {
-  const tools = await listToolRecords();
+  const mcpTools = await mcpClient.listTools();
+  
+  const tools = mcpTools.map((tool) => ({
+    id: `mcp-${tool.name}`,
+    name: tool.name,
+    integration_id: "",
+    integration_key: "",
+    integration_display_name: "MCP Built-in",
+    current_published_version_id: null,
+    published_version_number: null,
+    enabled: true,
+    planner_visible: !tool.name.startsWith("system."),
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }));
+  
   handleResponse(response, 200, "Ok", { tools });
 };
 
 export const listToolVersions: RequestHandler = async (request, response): Promise<void> => {
-  const versions = await listToolVersionRecords(getIntegerParam(request.params.toolId, "toolId"));
+  const toolId = request.params.toolId as string | undefined;
+  
+  if (toolId?.startsWith("mcp-")) {
+    handleResponse(response, 200, "Ok", { versions: [] });
+    return;
+  }
+  
+  const versions = await listToolVersionRecords(getIntegerParam(toolId, "toolId"));
   handleResponse(response, 200, "Ok", { versions });
 };
 

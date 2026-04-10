@@ -64,29 +64,41 @@ const parseOutput = (rawOutput: unknown): RespondOutput => {
 const executePlannedSpeech = async (
   speech: string,
 ): Promise<{
+  unsupported: boolean;
   selection: {
     tool: string;
     args: Record<string, unknown>;
   };
   responseText: string;
-  result: unknown;
+  result?: unknown;
 }> => {
   const plan = await planToolSelection(speech);
-  if (plan.tool.trim() === "" || plan.tool === "system.unsupported_request") {
-    throw new HttpError(422, "No supported task identified.", {
-      speech,
-      response: plan.response,
-    });
+  const selectedTool = plan.tool.trim();
+  const responseText =
+    plan.response.trim() !== ""
+      ? plan.response
+      : "I cannot help with that request using the available tools.";
+
+  if (selectedTool === "" || selectedTool === "system.unsupported_request") {
+    return {
+      unsupported: true,
+      selection: {
+        tool: "system.unsupported_request",
+        args: {},
+      },
+      responseText,
+    };
   }
 
-  const result = await mcpClient.callTool(plan.tool, plan.args);
+  const result = await mcpClient.callTool(selectedTool, plan.args);
 
   return {
+    unsupported: false,
     selection: {
-      tool: plan.tool,
+      tool: selectedTool,
       args: plan.args,
     },
-    responseText: extractToolText(result) || plan.response,
+    responseText: extractToolText(result) || responseText,
     result,
   };
 };
@@ -177,9 +189,24 @@ export const respond: RequestHandler = async (request, response): Promise<void> 
 
       const execution = await executePlannedSpeech(speech);
 
+      if (execution.unsupported) {
+        await respondWithOutput(response, output, {
+          status: 422,
+          message: "No supported task identified.",
+          json: {
+            mode: "speech_text",
+            speech,
+            selection: execution.selection,
+            response: execution.responseText,
+          },
+          text: execution.responseText,
+        });
+        return;
+      }
+
       await respondWithOutput(response, output, {
         status: 200,
-        message: "Tool executed",
+        message: `Tool executed: ${execution.selection.tool}`,
         json: {
           mode: "speech_text",
           speech,
@@ -194,9 +221,25 @@ export const respond: RequestHandler = async (request, response): Promise<void> 
 
     const { transcript, source } = await transcribeMultipartOrRawAudio(request);
     const execution = await executePlannedSpeech(transcript);
+
+    if (execution.unsupported) {
+      await respondWithOutput(response, output, {
+        status: 422,
+        message: "No supported task identified.",
+        json: {
+          mode: source,
+          transcript,
+          selection: execution.selection,
+          response: execution.responseText,
+        },
+        text: execution.responseText,
+      });
+      return;
+    }
+
     await respondWithOutput(response, output, {
       status: 200,
-      message: "Tool executed",
+      message: `Tool executed: ${execution.selection.tool}`,
       json: {
         mode: source,
         transcript,
@@ -223,7 +266,7 @@ export const respond: RequestHandler = async (request, response): Promise<void> 
         result,
       },
       text,
-      message: "Tool executed",
+      message: `Tool executed: ${selection.tool}`,
     });
     return;
   }
@@ -231,9 +274,25 @@ export const respond: RequestHandler = async (request, response): Promise<void> 
   if (typeof body.speech === "string" && body.speech.trim() !== "") {
     const speech = body.speech.trim();
     const execution = await executePlannedSpeech(speech);
+
+    if (execution.unsupported) {
+      await respondWithOutput(response, output, {
+        status: 422,
+        message: "No supported task identified.",
+        json: {
+          mode: "speech_json",
+          speech,
+          selection: execution.selection,
+          response: execution.responseText,
+        },
+        text: execution.responseText,
+      });
+      return;
+    }
+
     await respondWithOutput(response, output, {
       status: 200,
-      message: "Tool executed",
+      message: `Tool executed: ${execution.selection.tool}`,
       json: {
         mode: "speech_json",
         speech,
