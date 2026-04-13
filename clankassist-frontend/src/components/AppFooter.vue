@@ -68,7 +68,6 @@ function togglePaletteTray() {
 
 function selectPalette(paletteId: string) {
   sessionState.setPalette(paletteId)
-  isPaletteTrayOpen.value = false
 }
 </script>
 

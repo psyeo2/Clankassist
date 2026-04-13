@@ -7,8 +7,8 @@
         <p class="page__lede">
           {{
             isFirstRun
-              ? 'Create the initial admin password before the control surface opens.'
-              : 'Enter the orchestrator admin password to reopen the workspace.'
+              ? 'Create the initial admin password before the workspace opens.'
+              : 'Enter the orchestrator admin password to reopen the admin workspace.'
           }}
         </p>
 
@@ -35,7 +35,7 @@
             type="submit"
           >
             <AppIcon :icon="isFirstRun ? 'add-circle-line' : 'account-circle-line'" />
-            <span>{{ isFirstRun ? 'Initialize access' : 'Unlock shell' }}</span>
+            <span>{{ isFirstRun ? 'Create access' : 'Sign in' }}</span>
           </button>
         </form>
       </section>

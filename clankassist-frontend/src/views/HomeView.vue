@@ -1,21 +1,25 @@
 <template>
   <section class="page page-home">
-    <div v-if="isLoading" class="panel">
-      <p class="page__eyebrow">Overview</p>
-      <h1 class="page__title">Clankassist</h1>
-      <p class="page__lede">Loading orchestrator state.</p>
-    </div>
-
-    <template v-else-if="showApiUnavailable">
+    <template v-if="showApiUnavailable || isLoading">
       <header class="page__header">
         <div>
           <p class="page__eyebrow">Overview</p>
           <h1 class="page__title">Clankassist</h1>
-          <p class="page__lede">Dashboard content is paused until the admin API comes back.</p>
+          <p class="page__lede">
+            {{
+              showApiUnavailable
+                ? 'Dashboard content is paused until the admin API comes back.'
+                : 'Loading orchestrator state.'
+            }}
+          </p>
         </div>
       </header>
 
-      <ApiUnavailablePanel :message="apiAvailability.message" />
+      <ApiUnavailablePanel v-if="showApiUnavailable" :message="apiAvailability.message" />
+
+      <div v-else class="panel">
+        <p class="muted-copy">Loading orchestrator state.</p>
+      </div>
     </template>
 
     <template v-else-if="dashboard">
@@ -118,6 +122,11 @@ const isLoading = ref(true)
 const showApiUnavailable = computed(() => !apiAvailability.isReachable)
 
 onMounted(async () => {
+  if (showApiUnavailable.value) {
+    isLoading.value = false
+    return
+  }
+
   try {
     dashboard.value = await getDashboardData()
   } catch (error) {

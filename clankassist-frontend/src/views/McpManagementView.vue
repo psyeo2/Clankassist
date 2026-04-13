@@ -3,14 +3,14 @@
     <header class="page__header">
       <div>
         <p class="page__eyebrow">MCP management</p>
-        <h1 class="page__title">Tool fabric</h1>
+        <h1 class="page__title">Catalog</h1>
         <p class="page__lede">
           Stage tool and resource versions, then publish active catalog entries to the
           orchestrator database.
         </p>
       </div>
 
-      <div class="metric-strip page-mcp__summary">
+      <div v-if="!showApiUnavailable && !isLoading" class="metric-strip page-mcp__summary">
         <article class="metric-block">
           <p class="metric-block__label">Tools</p>
           <p class="metric-block__value">{{ tools.length }}</p>
@@ -22,7 +22,7 @@
       </div>
     </header>
 
-    <section class="panel">
+    <section v-if="!showApiUnavailable" class="panel">
       <div class="segmented-control">
         <button
           v-for="tab in tabs"
@@ -64,10 +64,11 @@
               @click="selectNewTool"
             >
               <span class="page-mcp__selection-header">
-                <strong>New tool</strong>
-                <span class="page-mcp__new-tool-pill" aria-hidden="true">
-                  <AppIcon icon="add-fill" size="14" />
+                <span class="page-mcp__new-tool-title">
+                  <AppIcon icon="add-line" size="15" />
+                  <strong>New tool</strong>
                 </span>
+                <span class="page-mcp__new-tool-pill">Draft</span>
               </span>
               <span class="muted-copy">Create a tool with version-owned execution</span>
             </button>
@@ -142,7 +143,7 @@
 
           <section v-else class="panel">
             <div class="section-heading">
-              <AppIcon icon="tool-line" />
+              <AppIcon icon="settings-3-line" />
               <span class="section-heading__title">Selected tool</span>
             </div>
 
@@ -1501,6 +1502,11 @@ async function handlePublishResourceVersion(versionNumber: number) {
 }
 
 onMounted(async () => {
+  if (showApiUnavailable.value) {
+    isLoading.value = false
+    return
+  }
+
   try {
     await refreshCatalog()
   } catch (error) {
@@ -1568,15 +1574,19 @@ watch(isEasyMode, (enabled, previous) => {
 }
 
 .page-mcp__new-tool-pill {
-  align-items: center;
-  background: #1f9d55;
-  border: 1px solid #15803d;
-  border-radius: 0.35rem;
-  color: #ffffff;
+  border: 1px solid var(--color-accent);
+  color: var(--color-accent);
   display: inline-flex;
-  height: 1.5rem;
-  justify-content: center;
-  width: 1.5rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  padding: 0.22rem 0.42rem;
+  text-transform: uppercase;
+}
+
+.page-mcp__new-tool-title {
+  align-items: center;
+  display: inline-flex;
+  gap: 0.5rem;
 }
 
 .page-mcp__selection-button.is-active,

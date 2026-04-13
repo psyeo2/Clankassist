@@ -28,7 +28,7 @@ The audio response box is rendered poorly - lots of empty space above it.
 
 ## 5. General frontend design
 
-Why does it say "shell" everywhere? Ridiculous. And `Response pipeline lab` and `Local command deck` and `Field Roster` and `Tool fabric`?
+Why does it say "shell" everywhere? And `Response pipeline lab` and `Local command deck` and `Field Roster` and `Tool fabric`?
 
 Even on pages with less content than the height, there is a tiny amount of scroll. I imagine this is some discrepancy between the view box and the field. (That makes no sense lol)
 
@@ -40,4 +40,4 @@ New tool button is very ugly. Icon is not acceptable. Icons on that page need wo
 
 Allow perpetual audio streaming to a websocket with wake word and VAD determining what gets sent to whisper, then responses sent back across the websocket.
 
-## 7. Have a look at unreachable api box. It is inconsistent.
+## 7. Have a look at unreachable api box. It is inconsistent. ✅

@@ -3,13 +3,13 @@
     <header class="page__header">
       <div>
         <p class="page__eyebrow">Settings</p>
-        <h1 class="page__title">Control surface</h1>
-        <p class="page__lede">Reference information for the admin shell.</p>
+        <h1 class="page__title">Settings</h1>
+        <p class="page__lede">Reference information for the admin workspace.</p>
       </div>
     </header>
 
     <div v-if="isLoading" class="panel">
-      <p class="muted-copy">Loading control surface details.</p>
+      <p class="muted-copy">Loading settings.</p>
     </div>
 
     <template v-else>

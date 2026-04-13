@@ -5,7 +5,7 @@
         <span class="app-navbar__brand-mark">CA</span>
 
         <div>
-          <p class="app-navbar__eyebrow">Local command deck</p>
+          <p class="app-navbar__eyebrow">Admin workspace</p>
           <strong class="app-navbar__title">Clankassist</strong>
         </div>
       </RouterLink>
@@ -29,8 +29,8 @@
             sessionState.isDevBypassEnabled
               ? 'DEV bypass'
               : sessionState.isAuthenticated
-                ? 'Lock shell'
-                : 'Access shell'
+                ? 'Sign out'
+                : 'Sign in'
           }}
         </button>
 
@@ -88,6 +88,10 @@ async function handleAccessAction() {
 
 <style scoped>
 .app-navbar {
+  backdrop-filter: blur(18px);
+  background:
+    linear-gradient(180deg, rgba(12, 18, 32, 0.82), rgba(12, 18, 32, 0.46));
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   position: sticky;
   top: 0;
   z-index: 20;
@@ -95,9 +99,6 @@ async function handleAccessAction() {
 
 .app-navbar__inner {
   align-items: center;
-  backdrop-filter: blur(18px);
-  background: rgba(0, 0, 0, 0.14);
-  border-bottom: 1px solid var(--color-border);
   display: grid;
   gap: 1rem;
   grid-template-columns: auto 1fr auto;

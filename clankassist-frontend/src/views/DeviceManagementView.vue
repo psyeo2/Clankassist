@@ -3,7 +3,7 @@
     <header class="page__header">
       <div>
         <p class="page__eyebrow">Device management</p>
-        <h1 class="page__title">Field roster</h1>
+        <h1 class="page__title">Devices</h1>
         <p class="page__lede">
           Create managed devices, inspect their state, and issue bearer tokens for edge access.
         </p>

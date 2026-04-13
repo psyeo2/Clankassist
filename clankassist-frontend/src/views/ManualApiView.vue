@@ -3,7 +3,7 @@
     <header class="page__header">
       <div>
         <p class="page__eyebrow">Manual API</p>
-        <h1 class="page__title">Response pipeline lab</h1>
+        <h1 class="page__title">Manual API</h1>
         <p class="page__lede">
           Use your current admin session to test the same orchestration path as `/respond` without
           minting a device token.
@@ -22,7 +22,7 @@
       <div class="page-manual__layout">
       <section class="panel">
         <div class="section-heading">
-          <AppIcon icon="shield-keyhole-line" />
+          <AppIcon icon="account-circle-line" />
           <span class="section-heading__title">Session mode</span>
         </div>
 
@@ -120,7 +120,7 @@
           <pre class="code-block">{{ responseState.value }}</pre>
         </article>
 
-        <article v-else class="stack-list__item">
+        <article v-else class="stack-list__item page-manual__audio-response">
           <h2 class="stack-list__title">Audio response</h2>
           <audio class="page-manual__audio" controls :src="responseState.value"></audio>
           <a class="action-button" :href="responseState.value" download="response.wav">Download audio</a>
@@ -256,7 +256,13 @@ onBeforeUnmount(() => {
 }
 
 .page-manual__audio {
+  display: block;
   width: 100%;
+}
+
+.page-manual__audio-response {
+  align-content: start;
+  grid-auto-rows: max-content;
 }
 
 .code-block {

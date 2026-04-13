@@ -12,7 +12,7 @@
   --color-text: #e0e7ff;
   --color-muted: #94a3b8;
   --color-border: #2b3a67;
-  --shell-width: min(1400px, calc(100vw - 2rem));
+  --shell-width: min(1400px, calc(100% - 2rem));
 }
 
 *,
@@ -29,6 +29,7 @@ body,
 
 html {
   background: var(--color-background);
+  overflow-x: clip;
 }
 
 body {
@@ -37,6 +38,7 @@ body {
   font-family: "Trebuchet MS", "Segoe UI", sans-serif;
   line-height: 1.5;
   margin: 0;
+  overflow-x: clip;
 }
 
 body::selection {
@@ -58,19 +60,19 @@ textarea {
 }
 
 #app {
-  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .app-shell {
   display: grid;
   grid-template-rows: auto 1fr auto;
-  min-height: 100vh;
+  min-height: 100dvh;
   position: relative;
 }
 
 .app-shell__content {
   margin: 0 auto;
-  padding: 1.2rem 1rem 2rem;
+  padding: 1.2rem 1rem 1.25rem;
   position: relative;
   width: var(--shell-width);
   z-index: 1;
@@ -131,6 +133,11 @@ textarea {
   justify-content: space-between;
 }
 
+.page__header > div:first-child {
+  flex: 1 1 40rem;
+  min-width: 0;
+}
+
 .page__eyebrow {
   color: var(--color-muted);
   font-size: 0.74rem;
@@ -152,7 +159,7 @@ textarea {
   color: var(--color-muted);
   font-size: 1rem;
   margin: 0;
-  max-width: 44rem;
+  max-width: none;
 }
 
 .panel {
