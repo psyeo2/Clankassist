@@ -1,75 +1,53 @@
 # Diakonos-Assist
 
-Diakonos-Assist is a small homelab voice-assistant stack.
+Diakonos-Assist is a homelab assistant stack centred on a single public application service: `orchestrator/`.
 
-At a high level, the system is split into:
+The current architecture is:
 
-- speech-to-text on an AI host
-- LLM planning on an AI host
-- text-to-speech on an AI host
-- an audio-in pipeline service with audio or text output
-- a process/orchestration API that can run almost anywhere
-- optional internal services such as GPU metrics and Jellyseerr
+- `orchestrator/` owns HTTP and websocket intake, auth, planning, voice-pipeline coordination, and response shaping
+- `mcp-server/` is spawned by the orchestrator over stdio and executes published tools from Postgres
+- `whisper-api/` provides speech-to-text
+- `piper-api/` provides text-to-speech
+- `postgres` stores admin auth state, devices, tokens, tools, versions, resources, and publication state
+- `clankassist-frontend/` is the admin/user web UI
+- `esp/` is the edge-device area for voice-node work
 
 ## Current Components
 
-### `process-api/`
+### `orchestrator/`
 
-The main orchestration API.
+The main application service.
 
-This is the part that:
+It currently:
 
-- accepts text requests
-- sends speech requests to oLLaMa for tool selection
-- validates tool selections
-- executes local service integrations
-- returns structured JSON plus a voice-friendly response string
-
-This service does not need a GPU.
-
-It can run on:
-
-- a desktop
-- a VM
-- a low-power server
-- any machine that can reach the configured upstream services over the network
+- exposes `POST /api/v1/respond` for text and uploaded audio
+- exposes `WS /api/v1/listen` for long-lived device voice sessions
+- handles admin auth and device auth
+- plans tool selection with an OpenAI-compatible LLM API
+- calls the local MCP server for tool execution
+- calls `whisper-api` and `piper-api` when needed
 
 See:
 
-- [Process API README](./process-api/README.md)
-- [Process API Service Guide](./process-api/docs/add-service.md)
+- [Orchestrator README](./orchestrator/README.md)
 
-### `pipeline-server/`
+### `mcp-server/`
 
-Server-side voice pipeline orchestration.
+The runtime MCP server.
 
-This is the simplest service for an onboard device to talk to:
+It currently:
 
-- it accepts audio
-- it sends that audio to `whisper-api`
-- it sends the transcript to `process-api`
-- it can send the response text to `piper-api`
-- it returns either generated audio or plain text back to the caller
-
-This service does not need a GPU. It is just HTTP orchestration across the voice stack.
-
-See:
-
-- [Pipeline Server README](./pipeline-server/README.md)
-
-### `ollama/`
-
-Docker Compose for oLLaMa.
-
-This should be copied to and run on a machine with a GPU if you want local LLM inference with decent latency.
+- loads the published tool and resource catalog from Postgres
+- registers built-in system tools plus published catalog tools
+- validates tool inputs
+- executes declarative HTTP-backed tool definitions
+- returns structured MCP results to the orchestrator
 
 ### `whisper-api/`
 
-FastAPI speech-to-text service built on `faster-whisper`.
+GPU-oriented speech-to-text using `faster-whisper`.
 
-This should also be copied to and run on a machine with a GPU.
-
-It is intended to accept uploaded audio and return text for downstream processing.
+It accepts uploaded audio and returns a transcription JSON payload.
 
 See:
 
@@ -77,136 +55,107 @@ See:
 
 ### `piper-api/`
 
-Text-to-speech service built around Piper's own HTTP server.
+Piper-based text-to-speech, exposed through Piper's own HTTP server.
 
-This is the opposite side of `whisper-api`:
-
-- it accepts text
-- it returns WAV audio
-- it is intended to speak the response string produced by `process-api`
-
-Unlike `whisper-api`, this is a thin deployment wrapper rather than a custom app. It installs Piper from PyPI, bakes the local Cori voice into the image, and runs Piper's own HTTP server.
-
-The current default setup serves:
-
-- `piper-api/cori-high/en_GB-cori-high.onnx`
-- on `http://<host>:8002`
-- with no required environment variables
+It accepts text and returns WAV audio.
 
 See:
 
 - [Piper API README](./piper-api/README.md)
 
+### `clankassist-frontend/`
+
+The web frontend for admin flows and manual interaction with the orchestrator.
+
+### `ollama/`
+
+Optional local LLM deployment helper.
+
+This repo does not require Ollama specifically. The orchestrator only requires an OpenAI-compatible LLM endpoint.
+
+## Current Request Flow
+
+### HTTP text or audio
+
+1. A caller sends text or audio to `orchestrator`.
+2. If audio is provided, `orchestrator` sends it to `whisper-api`.
+3. `orchestrator` asks the configured LLM to choose a tool and draft a response.
+4. `orchestrator` calls `mcp-server`.
+5. `mcp-server` executes the selected tool against the published catalog.
+6. `orchestrator` returns JSON, plain text, or generated audio.
+
+### Streaming voice device
+
+1. A paired edge device opens `WS /api/v1/listen`.
+2. Wake-word detection happens on the device.
+3. The device starts a turn and streams pre-roll plus live PCM audio.
+4. `orchestrator` runs server-side VAD and sends `stop_capture` when the utterance is complete.
+5. `orchestrator` reuses the same transcription, planning, MCP, and TTS pipeline used by `/respond`.
+6. Transcript, result, and optional output audio are returned over the websocket.
+
 ## Deployment Guidance
 
-The practical deployment split is:
+### AI / media host
 
-### Put these on a GPU machine
+Recommended:
 
-- `ollama/`
 - `whisper-api/`
 - `piper-api/`
+- an OpenAI-compatible LLM endpoint, if self-hosted
 
-Reason:
+### App host
 
-- these are the voice and model-serving parts of the stack
-- `ollama/` and `whisper-api/` materially benefit from GPU acceleration
-- `piper-api/` is lighter and can run on CPU, but it still makes sense to keep it on the same AI host for a simple voice pipeline
-- `piper-api/` is standalone, so it can be copied on its own like `whisper-api/`
+Run:
 
-### Run this wherever convenient
+- `orchestrator/`
+- local `mcp-server/` subprocess
+- `postgres`
+- optionally `clankassist-frontend/`
 
-- `pipeline-server/`
-- `process-api/`
+See:
 
-Reason:
-
-- these are mostly HTTP orchestration services
-- they do not require local GPU inference
-- it only needs network access to:
-  - Piper
-  - oLLaMa
-  - whisper, if your wider system uses it
-  - any integrated services such as Jellyseerr or GPU exporter
-
-In practice, `process-api` and `pipeline-server` can live on the same GPU host, but they do not have to.
-
-## Suggested Request Flow
-
-The intended device-facing voice flow is:
-
-1. Audio is captured somewhere upstream.
-2. The audio is sent to `pipeline-server`.
-3. `pipeline-server` sends the audio to `whisper-api`.
-4. `pipeline-server` sends the transcript to `process-api`.
-5. `process-api` sends the text and available tools to oLLaMa.
-6. oLLaMa chooses a tool and arguments.
-7. `process-api` executes that tool and returns a spoken response string.
-8. `pipeline-server` can send that response string to `piper-api`.
-9. `pipeline-server` returns either WAV audio for playback or plain text.
-
-For the current repo setup, `piper-api` uses the baked-in Cori voice by default.
+- [Deployment Notes](./docs/DEPLOYMENT.md)
 
 ## Repository Layout
 
 ```text
 .
-├── docs/                 Top-level architecture and planning docs
-├── ollama/               Docker Compose for local LLM inference
-├── piper-api/            Piper-based text-to-speech service
-├── pipeline-server/      Audio-in orchestration service with audio or text output
-├── process-api/          Main orchestration / tool-execution API
-├── whisper-api/          GPU-backed speech-to-text service
-└── test-audio/           Example audio files
+├── clankassist-frontend/  Web UI
+├── docs/                  Architecture and product docs
+├── esp/                   Edge-device work
+├── mcp-server/            MCP runtime server
+├── ollama/                Optional local LLM deployment helper
+├── orchestrator/          Main public application service
+├── piper-api/             Piper-based TTS deployment
+├── test-audio/            Audio fixtures and samples
+├── voice-models/          Local voice-model assets
+└── whisper-api/           Whisper-based STT service
 ```
 
 ## Documentation
 
-Top-level docs:
-
 - [Architecture](./docs/ARCHITECTURE.md)
+- [Auth And Discovery](./docs/AUTH-AND-DISCOVERY.md)
 - [Deployment Notes](./docs/DEPLOYMENT.md)
+- [MCP Restructure](./docs/MCP_RESTRUCTURE.md)
 - [Tool Registry Future](./docs/TOOL-REGISTRY-FUTURE.md)
-
-Process API docs:
-
-- [Process API Overview](./process-api/README.md)
-- [Adding a Service](./process-api/docs/add-service.md)
-
-Pipeline docs:
-
-- [Pipeline Server README](./pipeline-server/README.md)
-
-Voice service docs:
-
-- [Whisper API README](./whisper-api/README.md)
-- [Piper API README](./piper-api/README.md)
+- [Voice Node Requirements](./docs/VOICE_NODE_REQS.md)
+- [Voice Node Protocol Examples](./docs/VOICE_NODE_PROTOCOL_EXAMPLES.md)
 
 ## Current Status
 
-The main implemented application layer in this repo is `process-api`.
+The old `process-api` and `pipeline-server` split has been retired.
 
-That API now supports:
+The current product direction is:
 
-- direct tool execution
-- speech-mode tool planning via oLLaMa
-- tool availability filtering based on env configuration
-- request-scoped logging with configurable log levels
-- current integrations for:
-  - GPU status
-  - Jellyseerr
-
-The wider end-to-end voice system still depends on how you connect:
-
-- audio capture
-- speech-to-text
-- pipeline orchestration
-- process orchestration
-- text-to-speech
+- one public orchestrator
+- one local MCP runtime
+- one shared speech pipeline reused by HTTP `/respond` and websocket `/listen`
+- admin-managed published tool catalog in Postgres
+- edge-device wake-word capture with orchestrator-side VAD
 
 ## Notes
 
-- `process-api` expects text, not raw audio.
-- `pipeline-server` is the service that turns audio in into audio out or text out.
-- The GPU machine split is a deployment recommendation, not a hard requirement.
-- If you want to extend the assistant, start in `process-api` and follow the service-addition guide.
+- `WS /api/v1/listen` is for paired devices, not browsers or admin clients
+- the orchestrator expects an OpenAI-compatible LLM API, not a specific provider
+- `mcp-server` is intentionally not exposed as a separate public network service

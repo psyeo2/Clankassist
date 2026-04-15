@@ -2,13 +2,13 @@
 
 ## Overview
 
-Diakonos-Assist is moving toward a split between a user-facing orchestrator and a dedicated MCP tool server.
+Diakonos-Assist is built around a split between a user-facing orchestrator and a dedicated MCP tool server.
 
-The target architecture is:
+The current architecture is:
 
 - `orchestrator` handles audio/text intake, planning, response shaping, and voice-pipeline coordination
 - `mcp-server` exposes tools, validates tool calls, executes a generic integration skeleton, and returns structured results
-- `postgres` stores tool metadata, integration definitions, execution specs, versions, and publication state
+- `postgres` stores tool metadata, execution specs, versions, resources, auth state, devices, and publication state
 - an external OpenAI-compatible LLM API handles planning / LLM inference
 - `whisper-api` handles speech-to-text
 - `piper-api` handles text-to-speech using Piper's built-in HTTP server and a baked-in local voice model
@@ -18,7 +18,7 @@ The important point is that the orchestrator coordinates the user workflow, whil
 
 In the chosen deployment model, the orchestrator starts the MCP server as a local subprocess and communicates with it over stdio. This keeps the distribution model simple while preserving a clear logical split between orchestration and tool execution.
 
-The MCP server is intentionally generic. Service-specific client modules such as `integrations/gpuStatus/client.ts` are not part of the target design. Instead, Postgres defines integrations, request shapes, response extraction rules, and published tool metadata, while the MCP server provides a constrained execution engine that can interpret those definitions safely.
+The MCP server is intentionally generic. Service-specific client modules are not part of the desired runtime model. Instead, Postgres defines published tool metadata and execution rules, while the MCP server provides a constrained execution engine that can interpret those definitions safely.
 
 ## High-Level Flow
 
@@ -58,12 +58,12 @@ flowchart LR
 subgraph ExternalAI["External / User-Managed AI Services"]
   whisper[whisper-api]
   llm[OpenAI-Compatible LLM API]
+  piper[piper-api]
 end
 
 subgraph AppHost["Kubernetes Cluster / Single App Container"]
   orchestrator[orchestrator]
   mcp[MCP Server]
-  piper[piper-api]
   postgres[(Postgres)]
   admin[Admin GUI]
 end
@@ -84,7 +84,7 @@ orchestrator --> piper
 mcp --> gpu
 mcp --> jelly
 mcp --> future
-admin --> postgres
+admin --> orchestrator
 ```
 
 ### Why this split
@@ -126,16 +126,17 @@ The MCP server can also run almost anywhere because it mainly does:
 
 When the orchestrator and MCP server are packaged together, the MCP server does not need its own network API. The orchestrator owns the public HTTP surface and treats the MCP server as an internal child process.
 
-Folding `pipeline-server` into the orchestrator is reasonable because its responsibilities were already orchestration concerns rather than a distinct business domain.
+The old `pipeline-server` responsibilities now live in the orchestrator because they were orchestration concerns rather than a distinct business domain.
 
 ## Orchestrator Responsibilities
 
-The orchestrator replaces the old split between `pipeline-server` and `process-api`.
+The orchestrator replaces the old `pipeline-server` plus `process-api` split.
 
 Its job is:
 
 - receive text requests
 - receive uploaded or raw audio
+- maintain long-lived device websocket sessions for streamed listen turns
 - call `whisper-api` when transcription is needed
 - call the configured LLM API to choose a tool and draft a short response
 - call the MCP server to execute the selected tool
@@ -145,11 +146,12 @@ Its job is:
 
 ### Request modes
 
-The orchestrator should support at least three modes:
+The orchestrator currently supports four main modes:
 
 1. text planning mode
 2. direct tool mode
 3. audio pipeline mode
+4. streaming listen mode
 
 Text planning mode:
 
@@ -174,7 +176,132 @@ Audio pipeline mode:
 - executes through the MCP server
 - optionally synthesises the response through `piper-api`
 
+Streaming listen mode:
+
+- input: long-lived websocket connection plus binary audio frames grouped into discrete turns
+- edge device performs wake-word detection locally and owns the pre-roll buffer
+- edge starts a turn only after wake-word detection and immediately flushes pre-roll plus live audio
+- orchestrator performs server-side VAD and decides when a turn should stop
+- orchestrator reuses the same transcription, planning, MCP, and TTS pipeline used by the HTTP audio path
+- result data is returned over the websocket as structured events and optional audio frames
+
 This keeps direct mode useful for deterministic testing while giving one service ownership of the full voice path.
+
+### Streaming Listen Protocol
+
+The listen websocket should be a long-lived connection that carries many short half-duplex turns.
+
+In this context, half-duplex means:
+
+- during capture, the client is primarily sending audio
+- after `stop_capture`, the server is primarily sending transcript, result, and optional response audio
+- only one active capture turn should exist per connection at a time
+
+The protocol should stay simple:
+
+- endpoint: `WS /api/v1/listen`
+- auth: device bearer token during websocket upgrade
+- control messages: JSON text frames
+- audio payloads: binary websocket frames
+- default audio format: `pcm_s16le`, mono, `16000Hz`
+- v1 transcription model: batch STT after the turn ends, not streaming STT
+
+Recommended client-to-server events:
+
+- `hello`
+  - sent once after connect
+  - describes device id, firmware version, and supported audio formats
+- `start_turn`
+  - starts a new utterance after a local wake-word hit
+  - includes `turn_id`, audio format, output mode, and metadata such as `pre_roll_ms`
+- binary audio frames
+  - raw PCM chunks for the active turn
+  - first frames may contain the buffered pre-roll audio from before wake-word detection
+- `end_capture`
+  - indicates the client has stopped sending audio for the current turn
+  - sent after a server `stop_capture` in the normal server-ended capture flow
+  - may also be sent proactively by the client when it reaches a hard duration cap, loses microphone input, or must terminate capture locally
+  - should include a machine-readable reason such as `server_stop_capture`, `max_duration_reached`, `mic_error`, or `user_cancelled`
+- `cancel_turn`
+  - abandons the current turn if the device times out, loses audio, or the user aborts
+- `pong`
+  - optional heartbeat response if keepalive frames are used
+
+Recommended server-to-client events:
+
+- `listen_ready`
+  - confirms the websocket is authenticated and ready for turns
+  - includes server defaults such as expected audio format and max turn length
+- `turn_started`
+  - acknowledges the `start_turn`
+  - may include server-side capture limits for this turn
+- `stop_capture`
+  - tells the client to stop streaming because VAD or a hard limit determined the utterance is complete
+  - client must stop sending audio immediately on receipt
+- `turn_processing`
+  - indicates capture is complete and STT / planning / execution has started
+  - sent after the server receives `end_capture`, whether capture ended because of `stop_capture` or because the client terminated capture locally
+- `transcript`
+  - returns the final transcript produced for the turn
+- `turn_result`
+  - returns the same logical payload shape as the HTTP `respond` endpoint
+  - should include `transcript`, `selection`, `response`, and `result` when available
+- `output_audio_start`
+  - declares that audio response frames will follow
+- binary audio frames
+  - WAV bytes or PCM chunks for playback, depending on the agreed response format
+- `output_audio_end`
+  - marks the end of response audio for the turn
+- `turn_complete`
+  - indicates the turn has fully finished and the connection is idle again
+- `error`
+  - returns structured error information scoped to the connection or a specific turn
+- `ping`
+  - optional keepalive frame
+
+Recommended turn flow:
+
+Shared turn start:
+
+1. Device connects to `/api/v1/listen` and sends `hello`.
+2. Orchestrator authenticates the device and returns `listen_ready`.
+3. Device detects the wake word locally.
+4. Device sends `start_turn` with a new `turn_id`.
+5. Device immediately streams binary PCM frames, starting with buffered pre-roll audio and then live microphone audio.
+6. Orchestrator runs VAD over the incoming stream and tracks hard guards such as max utterance length and max silence.
+
+Server-ended capture flow:
+
+7. Orchestrator sends `stop_capture` when VAD or a server-side hard limit decides the capture should end.
+8. Device stops microphone streaming immediately and sends `end_capture` with reason `server_stop_capture`.
+9. Orchestrator sends `turn_processing`.
+10. Orchestrator finalises the buffered audio, runs batch transcription, plans the tool call, executes through MCP, and optionally synthesises speech.
+11. Orchestrator sends `transcript`, `turn_result`, and optional response audio frames.
+12. Orchestrator sends `turn_complete`.
+13. The websocket stays open for the next wake-word turn.
+
+Client-ended capture flow:
+
+7. Device reaches its local hard duration cap or must terminate capture locally.
+8. Device stops microphone streaming and sends `end_capture` with a reason such as `max_duration_reached` or `mic_error`.
+9. Orchestrator treats the turn as closed to further audio and sends `turn_processing`.
+10. Orchestrator finalises the buffered audio, runs batch transcription, plans the tool call, executes through MCP, and optionally synthesises speech.
+11. Orchestrator sends `transcript`, `turn_result`, and optional response audio frames.
+12. Orchestrator sends `turn_complete`.
+13. The websocket stays open for the next wake-word turn.
+
+Operational rules:
+
+- the edge device is responsible for wake-word detection and pre-roll buffering
+- the orchestrator is responsible for turn-end VAD, max-duration enforcement, and pipeline execution
+- the client must also enforce its own hard safety timeout in case `stop_capture` is never received
+- if the client terminates capture locally, it must send `end_capture` and the server should move the turn into processing without waiting for `stop_capture`
+- once `stop_capture` has been sent, any additional client audio frames for that turn should be ignored or logged as a protocol violation
+- once `end_capture` has been received, any additional client audio frames for that turn should be ignored or logged as a protocol violation
+- the server should reject unsupported audio formats at `start_turn` time rather than mid-stream
+- each event should carry `turn_id` once a turn exists so logs and failures are traceable
+- the websocket should remain open across many turns, but each turn should be isolated in memory and cleanup
+- response audio should be optional because some clients may want text or structured JSON only
 
 ### Internal layers
 
@@ -197,6 +324,33 @@ response --> tts{Audio output?}
 tts -->|yes| piper[piper-api]
 piper --> final[HTTP response]
 tts -->|no| final
+```
+
+Streaming listen should reuse the same core pipeline after audio capture ends:
+
+```mermaid
+flowchart TD
+
+ws[WS /listen] --> ready[authenticated session]
+ready --> wake[edge wake-word hit]
+wake --> start[start_turn]
+start --> ingress[binary audio ingress]
+ingress --> vad[server-side VAD]
+ingress --> localStop[client hard cap / local abort]
+vad --> stop[stop_capture]
+stop --> endCapture[end_capture]
+endCapture --> processing[turn_processing]
+localStop --> endLocal[end_capture]
+endLocal --> processing
+processing --> assemble[turn audio assembly]
+assemble --> whisper[whisper-api]
+whisper --> planner[planner step]
+planner --> mcp[MCP Server]
+mcp --> response[result shaping]
+response --> tts{Audio output?}
+tts -->|yes| piper[piper-api]
+piper --> wsout[websocket response events + audio frames]
+tts -->|no| wsout
 ```
 
 ## MCP Server Responsibilities
@@ -397,9 +551,30 @@ The safest migration path is:
 3. move tool metadata, integration definitions, and execution specs into Postgres
 4. add strict validation between published specs and the engine's supported capabilities
 5. add an admin GUI for draft, validate, publish, and rollback workflows
-6. fold `pipeline-server` into the orchestrator and retire the split audio path
+6. retire the old split audio path in favour of the orchestrator-owned voice pipeline
 
 This gives a cleaner long-term architecture without making the runtime path less deterministic.
+
+## Streaming Listen Status
+
+The websocket listen path is already implemented with the following pieces in place:
+
+1. real `ws`-based `/listen` handling
+2. shared HTTP and websocket pipeline reuse
+3. structured websocket events with `turn_id`
+4. per-connection turn state and cleanup
+5. server-side Silero VAD plus hard guards
+6. PCM buffering and WAV utterance assembly
+7. `stop_capture` plus required client `end_capture`
+8. handling for both server-ended and client-ended capture
+9. reuse of the batch Whisper -> planner -> MCP -> Piper pipeline after capture
+10. websocket transcript, result, and optional response audio events
+11. request and turn lifecycle logging
+
+The main remaining work is:
+
+1. protocol and integration tests with recorded PCM fixtures
+2. at least one device-side smoke test covering pre-roll and multi-turn socket reuse
 
 ## Related Documents
 

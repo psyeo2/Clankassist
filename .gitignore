@@ -143,3 +143,5 @@ clean-oceans-test-full.wav
 voice-models/
 
 __pycache__/
+
+silero-python/

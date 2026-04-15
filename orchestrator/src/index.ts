@@ -37,8 +37,8 @@ app.use(notFound);
 app.use(errorHandler);
 
 const server = http.createServer(app);
-server.on("upgrade", (request, socket) => {
-  void handleListenUpgrade(request, socket, `${apiPrefix}/listen`).then((handled) => {
+server.on("upgrade", (request, socket, head) => {
+  void handleListenUpgrade(request, socket, head, `${apiPrefix}/listen`).then((handled) => {
     if (!handled) {
       socket.destroy();
     }

@@ -7,8 +7,8 @@ Current scope:
 - spawn and connect to the local stdio MCP server
 - fetch tools from MCP and ask an OpenAI-compatible LLM API to choose the correct one for speech requests
 - expose a public `respond` endpoint for text/audio input and `json|text|audio` output
-- expose a stub WebSocket `listen` endpoint for future wake-word/VAD streaming
-- provide internal/debug routes for health, tools, direct process calls, Whisper, and Piper
+- expose a real WebSocket `listen` endpoint for wake-word/VAD-driven voice turns
+- provide helper routes for health, tools, direct process calls, Whisper, and Piper passthrough
 
 ## Logging
 
@@ -40,6 +40,8 @@ Admin auth now uses password setup plus logged-in session tokens.
 - `/api/v1/admin/*` management routes require an admin bearer token
 - device-facing routes such as `/api/v1/respond` and `/api/v1/listen` require a device bearer token
 
+Canonical `device_id` values are orchestrator-issued and stored against device records. Unpaired devices should use temporary bootstrap handles or pairing codes, not MAC addresses, during discovery.
+
 ## Examples
 
 Direct tool execution:
@@ -70,6 +72,15 @@ curl -X POST "http://localhost:3000/api/v1/respond?output=text" \
   --data "what temp is my gpu?"
 ```
 
+`respond` with raw audio:
+
+```bash
+curl -X POST "http://localhost:3000/api/v1/respond?output=json&filename=question.wav" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: audio/wav" \
+  --data-binary "@test-audio/piper-out/hello.wav"
+```
+
 Whisper passthrough:
 
 ```bash
@@ -95,6 +106,7 @@ Piper passthrough:
 - `LLM_MODEL`
 - `WHISPER_URL`
 - `PIPER_URL`
+- `SILERO_VAD_MODEL_PATH` optional, defaults to the bundled model path
 - `PG_HOST`
 - `PG_PORT`
 - `PG_USER`
