@@ -137,8 +137,6 @@ See:
 - [Architecture](./docs/ARCHITECTURE.md)
 - [Auth And Discovery](./docs/AUTH-AND-DISCOVERY.md)
 - [Deployment Notes](./docs/DEPLOYMENT.md)
-- [MCP Restructure](./docs/MCP_RESTRUCTURE.md)
-- [Tool Registry Future](./docs/TOOL-REGISTRY-FUTURE.md)
 - [Voice Node Requirements](./docs/VOICE_NODE_REQS.md)
 - [Voice Node Protocol Examples](./docs/VOICE_NODE_PROTOCOL_EXAMPLES.md)
 

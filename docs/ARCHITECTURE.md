@@ -2,7 +2,7 @@
 
 ## Overview
 
-Diakonos-Assist is built around a split between a user-facing orchestrator and a dedicated MCP tool server.
+Clankassist is built around a split between a user-facing orchestrator and a dedicated MCP tool server.
 
 The current architecture is:
 
@@ -126,13 +126,9 @@ The MCP server can also run almost anywhere because it mainly does:
 
 When the orchestrator and MCP server are packaged together, the MCP server does not need its own network API. The orchestrator owns the public HTTP surface and treats the MCP server as an internal child process.
 
-The old `pipeline-server` responsibilities now live in the orchestrator because they were orchestration concerns rather than a distinct business domain.
-
 ## Orchestrator Responsibilities
 
-The orchestrator replaces the old `pipeline-server` plus `process-api` split.
-
-Its job is:
+The orchestrator's job is:
 
 - receive text requests
 - receive uploaded or raw audio
@@ -580,5 +576,4 @@ The main remaining work is:
 
 See:
 
-- [Tool Registry Future](./TOOL-REGISTRY-FUTURE.md)
 - [Auth And Discovery](./AUTH-AND-DISCOVERY.md)
