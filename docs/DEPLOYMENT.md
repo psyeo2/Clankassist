@@ -2,64 +2,58 @@
 
 ## Recommended Split
 
-The current recommended deployment split is:
+The current recommended split is:
 
-### AI / service host
+### AI / media host
 
 Copy and run:
 
 - `whisper-api/`
 - `piper-api/`
+- an OpenAI-compatible LLM endpoint if you self-host one
 
-These are the voice-serving parts of the stack.
+These are the inference-heavy or media-serving parts of the stack.
 
-Important distinction:
+Important distinctions:
 
-- `whisper-api/` is the component that most clearly needs the GPU
-- `piper-api/` can run on CPU, but it usually belongs on the same AI host for operational simplicity
-- the LLM endpoint is external and user-managed, as long as it exposes an OpenAI-compatible API
+- `whisper-api/` is the component that most clearly benefits from a GPU
+- `piper-api/` can run on CPU, but often belongs on the same host for operational simplicity
+- the LLM endpoint is external from the orchestrator's point of view, even if you self-host it
 
-`piper-api/` is designed to be copied and run on its own, similar to `whisper-api/`. It does not depend on a vendored Piper source tree being present beside it.
-
-The current `piper-api/` setup is intentionally minimal:
-
-- `docker compose up --build`
-- Piper installed from PyPI
-- local Cori model baked into the image
-- default host port `8002`
-- no required env configuration
-
-### Any convenient machine
+### App host
 
 Run:
 
 - `orchestrator/`
-- `mcp-server/` is started by the orchestrator as a local subprocess
-- `postgres/`
+- local `mcp-server/` subprocess
+- `postgres`
+- optionally `clankassist-frontend/`
 
 These services can run on almost any machine that has network access to:
 
-- the configured LLM endpoint
+- the configured `LLM_URL`
 - `whisper-api`
 - `piper-api`
-- the services it integrates with
-- any caller that needs to reach it
+- Postgres
+- the internal services your published MCP tools call
 
 ## Why The Orchestrator Does Not Need To Be On The AI Host
 
 `orchestrator` mainly performs:
 
 - input validation
-- prompt assembly and planner calls
+- request routing
+- planner prompts and LLM calls
 - MCP client calls
-- service orchestration
-- logging
 - auth and admin API handling
+- websocket session handling
+- server-side VAD coordination for `/listen`
+- response shaping and logging
 
 `mcp-server` mainly performs:
 
-- tool discovery
-- validation
+- published catalog loading
+- tool validation
 - declarative HTTP execution
 - result shaping
 
@@ -67,21 +61,22 @@ That work is light compared with STT and LLM inference.
 
 ## Example Layout
 
-### Machine A: AI / service host
+### Machine A: AI / media host
 
 - external or self-hosted OpenAI-compatible LLM endpoint
-- whisper-api on port `8001`
-- piper-api on port `8002`
+- `whisper-api` on port `8001`
+- `piper-api` on port `8002`
 
-In the current repo state, `piper-api` serves the baked-in model at:
+In the current repo state, `piper-api` serves the baked-in Cori model at:
 
 - `piper-api/cori-high/en_GB-cori-high.onnx`
 
-### Machine B: orchestration host
+### Machine B: app host
 
-- orchestrator on port `3000`
-- local mcp-server subprocess
-- postgres
+- `orchestrator` on port `3000`
+- local `mcp-server` subprocess
+- Postgres
+- optional `clankassist-frontend`
 
 ### Internal service hosts
 
@@ -96,16 +91,16 @@ In the current repo state, `piper-api` serves the baked-in model at:
 - `LLM_URL`
 - `WHISPER_URL`
 - `PIPER_URL`
-- postgres
+- Postgres
 - the local `mcp-server` subprocess
 
 `mcp-server` must be able to reach:
 
-- each configured integration endpoint
+- each published tool's allowed upstream endpoints
 
-If your wider system uses `whisper-api`, the caller or upstream layer must also be able to reach that service.
+Edge devices or other callers that use the assistant must be able to reach:
 
-If you use `piper-api` for playback, the caller or downstream voice layer must also be able to reach that service.
+- `orchestrator`
 
 ## Environment Configuration
 
@@ -120,19 +115,21 @@ At minimum, `orchestrator` needs:
 - `LLM_MODEL`
 - `WHISPER_URL`
 - `PIPER_URL`
+- `SILERO_VAD_MODEL_PATH`
 - `PG_HOST`
 - `PG_PORT`
 - `PG_USER`
 - `PG_PASSWORD`
 - `PG_DB`
 
-Integration-specific variables are only needed for the services you actually want enabled.
+Tool-specific auth and endpoint values are only needed for the tools you actually publish.
 
 ## Operational Advice
 
 - keep the orchestrator separate from the AI host if you want cleaner failure isolation
-- keep `LOG_LEVEL=SUMMARY` or `LOG_LEVEL=INFO` in development
+- keep `LOG_LEVEL=SHORT` or `LOG_LEVEL=INFO` in development
 - use `LOG_LEVEL=NONE` only if you have another observability path
-- treat optional integrations as optional at deployment time
+- treat optional tools and integrations as optional at deployment time
+- keep the Silero model file deployed alongside the orchestrator if you use `/listen`
 
-If a service is not configured, speech mode should not advertise it to the planner.
+If a service is not configured, published tools or voice flows that depend on it should not be advertised as healthy.

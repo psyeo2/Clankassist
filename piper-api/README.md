@@ -115,8 +115,8 @@ The current Compose file always:
 The expected voice path is:
 
 1. audio is transcribed by `whisper-api`
-2. text is processed by `process-api`
-3. `process-api` returns a short response string
+2. text is planned and executed by `orchestrator` through the local `mcp-server`
+3. `orchestrator` produces a short response string
 4. that response string is sent to `piper-api`
 5. `piper-api` returns WAV audio for playback
 

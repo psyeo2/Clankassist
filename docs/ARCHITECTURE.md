@@ -2,13 +2,13 @@
 
 ## Overview
 
-Diakonos-Assist is moving toward a split between a user-facing orchestrator and a dedicated MCP tool server.
+Diakonos-Assist is built around a split between a user-facing orchestrator and a dedicated MCP tool server.
 
-The target architecture is:
+The current architecture is:
 
 - `orchestrator` handles audio/text intake, planning, response shaping, and voice-pipeline coordination
 - `mcp-server` exposes tools, validates tool calls, executes a generic integration skeleton, and returns structured results
-- `postgres` stores tool metadata, integration definitions, execution specs, versions, and publication state
+- `postgres` stores tool metadata, execution specs, versions, resources, auth state, devices, and publication state
 - an external OpenAI-compatible LLM API handles planning / LLM inference
 - `whisper-api` handles speech-to-text
 - `piper-api` handles text-to-speech using Piper's built-in HTTP server and a baked-in local voice model
@@ -18,7 +18,7 @@ The important point is that the orchestrator coordinates the user workflow, whil
 
 In the chosen deployment model, the orchestrator starts the MCP server as a local subprocess and communicates with it over stdio. This keeps the distribution model simple while preserving a clear logical split between orchestration and tool execution.
 
-The MCP server is intentionally generic. Service-specific client modules such as `integrations/gpuStatus/client.ts` are not part of the target design. Instead, Postgres defines integrations, request shapes, response extraction rules, and published tool metadata, while the MCP server provides a constrained execution engine that can interpret those definitions safely.
+The MCP server is intentionally generic. Service-specific client modules are not part of the desired runtime model. Instead, Postgres defines published tool metadata and execution rules, while the MCP server provides a constrained execution engine that can interpret those definitions safely.
 
 ## High-Level Flow
 
@@ -58,12 +58,12 @@ flowchart LR
 subgraph ExternalAI["External / User-Managed AI Services"]
   whisper[whisper-api]
   llm[OpenAI-Compatible LLM API]
+  piper[piper-api]
 end
 
 subgraph AppHost["Kubernetes Cluster / Single App Container"]
   orchestrator[orchestrator]
   mcp[MCP Server]
-  piper[piper-api]
   postgres[(Postgres)]
   admin[Admin GUI]
 end
@@ -84,7 +84,7 @@ orchestrator --> piper
 mcp --> gpu
 mcp --> jelly
 mcp --> future
-admin --> postgres
+admin --> orchestrator
 ```
 
 ### Why this split
@@ -126,11 +126,11 @@ The MCP server can also run almost anywhere because it mainly does:
 
 When the orchestrator and MCP server are packaged together, the MCP server does not need its own network API. The orchestrator owns the public HTTP surface and treats the MCP server as an internal child process.
 
-Folding `pipeline-server` into the orchestrator is reasonable because its responsibilities were already orchestration concerns rather than a distinct business domain.
+The old `pipeline-server` responsibilities now live in the orchestrator because they were orchestration concerns rather than a distinct business domain.
 
 ## Orchestrator Responsibilities
 
-The orchestrator replaces the old split between `pipeline-server` and `process-api`.
+The orchestrator replaces the old `pipeline-server` plus `process-api` split.
 
 Its job is:
 
@@ -146,7 +146,7 @@ Its job is:
 
 ### Request modes
 
-The orchestrator should support at least four modes:
+The orchestrator currently supports four main modes:
 
 1. text planning mode
 2. direct tool mode
@@ -551,26 +551,30 @@ The safest migration path is:
 3. move tool metadata, integration definitions, and execution specs into Postgres
 4. add strict validation between published specs and the engine's supported capabilities
 5. add an admin GUI for draft, validate, publish, and rollback workflows
-6. fold `pipeline-server` into the orchestrator and retire the split audio path
+6. retire the old split audio path in favour of the orchestrator-owned voice pipeline
 
 This gives a cleaner long-term architecture without making the runtime path less deterministic.
 
-## Streaming Listen Implementation Steps
+## Streaming Listen Status
 
-The recommended implementation order for the websocket listen path is:
+The websocket listen path is already implemented with the following pieces in place:
 
-1. Replace the stub `/listen` handler with a real `ws` server and a connection session abstraction.
-2. Move the current HTTP audio pipeline logic into a reusable orchestrator service so HTTP and websocket paths share the same transcription, planning, MCP, and TTS code.
-3. Define a strict websocket event schema with `turn_id`, message types, supported audio formats, and structured error payloads.
-4. Implement per-connection turn state: current turn, chunk buffering, byte counters, deadlines, and cleanup on disconnect.
-5. Add server-side VAD for streamed PCM input and pair it with hard guards such as max utterance duration, max post-speech silence, and max buffered bytes.
-6. Build an audio assembly layer that turns inbound PCM chunks into the format expected by the existing Whisper integration.
-7. Send `stop_capture` from the orchestrator when VAD or a hard limit decides the utterance is complete, then require the client to answer with `end_capture`.
-8. If the client reaches its own hard stop first, require it to send `end_capture` proactively and move the server turn state straight into processing.
-9. After `end_capture`, run the existing batch pipeline: Whisper transcription, LLM planning, MCP execution, response shaping, and optional Piper synthesis.
-10. Return transcript, structured result, and optional audio response over websocket events that mirror the logical fields of the HTTP `respond` route.
-11. Add request-scoped logging for connection lifecycle, turn lifecycle, capture-end reason, VAD stop reason, upstream calls, and per-turn completion summaries.
-12. Add protocol tests with recorded PCM fixtures plus at least one device-side smoke test covering wake-word pre-roll, server-stopped capture, client-stopped capture, and multi-turn reuse of the same socket.
+1. real `ws`-based `/listen` handling
+2. shared HTTP and websocket pipeline reuse
+3. structured websocket events with `turn_id`
+4. per-connection turn state and cleanup
+5. server-side Silero VAD plus hard guards
+6. PCM buffering and WAV utterance assembly
+7. `stop_capture` plus required client `end_capture`
+8. handling for both server-ended and client-ended capture
+9. reuse of the batch Whisper -> planner -> MCP -> Piper pipeline after capture
+10. websocket transcript, result, and optional response audio events
+11. request and turn lifecycle logging
+
+The main remaining work is:
+
+1. protocol and integration tests with recorded PCM fixtures
+2. at least one device-side smoke test covering pre-roll and multi-turn socket reuse
 
 ## Related Documents
 

@@ -2,14 +2,14 @@
 
 ## Purpose
 
-This document defines the intended authentication, authorisation, and local-network device discovery model for Diakonos-Assist.
+This document defines the current auth model and the intended device onboarding model for Diakonos-Assist.
 
 The main goals are:
 
 - keep the public network surface limited to `orchestrator`
-- separate device access from admin access
-- support a good onboarding UX for edge mic/speaker devices
-- allow the GUI to manage MCP integrations, tools, and resources through the orchestrator
+- separate admin access from device access
+- support a good onboarding UX for edge voice devices
+- keep catalog management behind admin-only routes
 
 ## Public Surface
 
@@ -22,100 +22,66 @@ Other services remain internal:
 - `whisper-api` is internal
 - `piper-api` is internal
 
-This means both the GUI and edge devices talk to the orchestrator, but they do so with different auth models.
+This means both the GUI and edge devices talk to the orchestrator, but they do so with different credentials and different route permissions.
 
-## Actor Model
+## External Actors
 
 There are two external actor types:
 
-- admin users using the GUI
-- edge devices such as microphones, speakers, and future appliance endpoints
+- admin users using the GUI or admin API
+- edge devices such as voice nodes and future appliance endpoints
 
-These should not share the same credentials or route permissions.
+These must not share credentials.
 
-## Auth Model
+## Current Auth Model
 
 ### Admin auth
 
 Admin auth is for the GUI and any human-managed control surface.
 
-Admin auth should be able to:
+Current implementation:
 
-- manage integrations
-- create and edit tool drafts
-- publish and roll back tool versions
-- manage resources
-- view discovered devices
-- approve or reject devices
-- issue or revoke device tokens
+- initial setup is completed through `GET /api/v1/admin/setup/status` and `POST /api/v1/admin/setup`
+- admin login returns bearer access and refresh tokens
+- refresh rotates session state
+- logout and logout-all revoke current or all refresh chains
+- admin sessions are stored hashed in `admin_sessions`
 
-Admin auth should not be the same mechanism as device bearer tokens.
+Admin auth is used for:
+
+- catalog management
+- device management
+- MCP restart
+- future discovery and pairing approval flows
 
 ### Device auth
 
-Device auth is for edge devices calling normal assistant routes.
+Device auth is for paired edge devices.
 
-Device auth should be able to:
+Current implementation:
 
-- call `POST /api/v1/respond`
-- open `WS /api/v1/listen`
-- call lightweight health or capability endpoints if needed
+- devices are represented in the `devices` table
+- long-lived bearer tokens are issued per device and stored hashed in `device_tokens`
+- device-facing routes require a valid device bearer token
 
-Device auth should not be able to:
+Device auth is used for:
 
-- create or publish MCP tools
-- manage integrations or resources
-- approve other devices
-- perform admin actions
+- `POST /api/v1/respond`
+- `WS /api/v1/listen`
+- `GET /api/v1/ping`
+- `GET /api/v1/tools`
+- passthrough helper routes such as Whisper and Piper if you choose to expose them to devices
 
-## Recommended Credential Model
+Device auth must not be able to:
 
-### Admin bootstrap
-
-A hard-coded default password such as `adminadmin` is not recommended.
-
-Preferred model:
-
-- on first startup, there is no completed admin setup yet
-- orchestrator allows a one-time setup flow
-- the first admin user sets the real password in the GUI
-- after setup, the setup route is no longer usable for creating the initial password again
-
-Current implementation note:
-
-- this is currently implemented as a singleton application auth state row, not a full multi-user admin table
-- setup completion is derived from stored password hash state
-- if setup has not been completed yet, normal app routes are blocked
-
-### Admin sessions
-
-Admin login should create an admin session token or similar server-issued credential.
-
-That session is then used for `/api/v1/admin/*` routes.
-
-Current implementation note:
-
-- admin access uses bearer session tokens issued after login
-- access and refresh tokens are stored hashed in `admin_sessions`
-- `POST /api/v1/admin/refresh` rotates the session
-- `POST /api/v1/admin/logout-all` invalidates all existing admin refresh chains
-
-### Device tokens
-
-Devices should receive long-lived bearer tokens issued by the orchestrator after approval.
-
-These tokens should be:
-
-- hashed before storage
-- scoped to a specific device
-- revocable
-- auditable
+- access `/api/v1/admin/*`
+- create or publish tools or resources
+- issue or revoke tokens
+- restart MCP
 
 ## Route Separation
 
-Suggested route split:
-
-### Admin routes
+### Admin routes currently implemented
 
 - `GET /api/v1/admin/setup/status`
 - `POST /api/v1/admin/setup`
@@ -123,57 +89,62 @@ Suggested route split:
 - `POST /api/v1/admin/refresh`
 - `POST /api/v1/admin/logout`
 - `POST /api/v1/admin/logout-all`
+- `GET /api/v1/admin/tools`
+- `POST /api/v1/admin/tools`
+- `GET /api/v1/admin/tools/:toolId/versions`
+- `POST /api/v1/admin/tools/:toolId/versions`
+- `POST /api/v1/admin/tools/:toolId/publish`
+- `GET /api/v1/admin/resources`
+- `POST /api/v1/admin/resources`
+- `GET /api/v1/admin/resources/:resourceId/versions`
+- `POST /api/v1/admin/resources/:resourceId/versions`
+- `POST /api/v1/admin/resources/:resourceId/publish`
+- `POST /api/v1/admin/mcp/restart`
 - `GET /api/v1/admin/devices`
 - `POST /api/v1/admin/devices`
 - `GET /api/v1/admin/devices/:id`
 - `POST /api/v1/admin/devices/:id/tokens`
-- `POST /api/v1/admin/integrations`
-- `POST /api/v1/admin/tools`
-- `POST /api/v1/admin/tools/:toolId/versions`
-- `POST /api/v1/admin/tools/:toolId/publish`
-- `POST /api/v1/admin/resources`
-- `POST /api/v1/admin/resources/:resourceId/versions`
-- `POST /api/v1/admin/resources/:resourceId/publish`
 
-Current implementation note:
+### Device routes currently implemented
 
-- auth and device-token issuance routes exist now
-- catalog create/version/publish routes exist now for integrations, tools, and resources
-- discovery, approve, and reject routes are still future work
-
-### Device routes
-
+- `GET /api/v1/ping`
 - `POST /api/v1/respond`
 - `WS /api/v1/listen`
-- `GET /api/v1/ping`
+- `GET /api/v1/tools`
+- `POST /api/v1/process`
+- `POST /api/v1/whisper/transcribe`
+- `GET /api/v1/piper/voices`
+- `POST /api/v1/piper/synthesise`
 
-### Pairing routes
+The last four are still device-authenticated in the current router, even though `/respond` and `/listen` are the main product-facing paths.
 
-- `POST /api/v1/devices/register`
-- `POST /api/v1/devices/:id/claim`
+## Device Identity Model
 
-The exact route names may change, but the separation between admin-only routes and device routes should remain strict.
+The canonical application identity for a paired device is `device_id`, and it is assigned by the orchestrator during approval or signup.
 
-## Device Discovery UX
+Rules:
 
-UX is a priority, so device onboarding should avoid manual token copying where possible.
+- devices must not use MAC addresses as application identity
+- unpaired devices should expose only a temporary bootstrap handle or pairing code
+- the bootstrap handle exists only to help humans distinguish unpaired devices during discovery
+- after pairing, devices should persist the orchestrator-issued `device_id` and bearer token
 
-Preferred flow:
+## Discovery And Pairing
 
-1. Unpaired edge device starts up.
-2. Device advertises itself on the local network using mDNS / Bonjour.
-3. User opens the GUI and clicks `Scan for new devices`.
-4. GUI calls an admin-only orchestrator endpoint such as `POST /api/v1/admin/devices/discover`.
-5. Orchestrator performs a short-lived discovery scan and returns discovered unpaired devices.
-6. User selects a device and clicks approve.
-7. Orchestrator issues a device token and completes pairing.
-8. Device stores the token and stops advertising itself as unpaired.
+Discovery and pairing are not fully implemented in the orchestrator yet, but the intended model is settled enough to document.
 
-This is the intended high-UX path.
+### Preferred onboarding flow
 
-## Discovery Transport
+1. An unpaired device joins the user's Wi-Fi network.
+2. The device advertises itself over mDNS / Bonjour.
+3. The GUI asks the orchestrator to scan for discoverable devices.
+4. The orchestrator returns unpaired devices identified by temporary bootstrap handles or pairing codes.
+5. The admin approves a selected device.
+6. The orchestrator creates the canonical `device_id` and issues a device token.
+7. The orchestrator sends `device_id` plus token to the device's temporary pairing endpoint.
+8. The device stores them securely, switches to paired mode, and opens authenticated `/listen` sessions.
 
-Devices should advertise themselves, not the orchestrator.
+### Discovery transport
 
 Recommended discovery mechanism:
 
@@ -183,31 +154,38 @@ Suggested service name:
 
 - `_diakonos-device._tcp.local`
 
-Suggested metadata in TXT records:
+Suggested TXT metadata for unpaired devices:
 
-- device id
-- display name
-- model
-- hostname
-- capabilities such as `mic` and `speaker`
-- pairing port
-- pairing protocol version
+- `bootstrap_id`
+- `pairing_code`
+- `display_name`
+- `model`
+- `fw_version`
+- `hostname`
+- `capabilities`
+- `pairing_port`
+- `pairing_protocol_version`
+- `pairing_state=unpaired`
 
-This allows the orchestrator to find nearby devices when the admin explicitly requests a scan.
-
-## Pairing Completion
-
-Discovery alone is not enough. The approved device still needs to receive its issued token.
+### Pairing completion
 
 Preferred pairing completion model:
 
 - unpaired device exposes a tiny temporary pairing endpoint
-- after admin approval, orchestrator sends the issued device token to that endpoint
-- device stores the token securely
-- device switches from `unpaired` to `paired`
-- device stops advertising itself as discoverable
+- after admin approval, the orchestrator sends the issued `device_id` and device token to that endpoint
+- the device stores them securely
+- the device switches from `unpaired` to `paired`
+- the device stops advertising itself as unpaired
 
-This keeps onboarding mostly automatic from the user's point of view.
+### Fallbacks
+
+Recommended fallbacks:
+
+- manual add by IP or hostname
+- QR code or copy-paste bootstrap URL for setup
+- manual pairing code
+
+These are fallback paths, not the preferred default UX.
 
 ## Why Not Blind Network Scanning
 
@@ -224,39 +202,21 @@ Reasons:
 Discovery should be explicit and constrained:
 
 - devices advertise themselves
-- orchestrator scans only when the admin asks
-
-## Fallbacks
-
-mDNS works well on a normal local subnet, but it is not universal.
-
-Fallback options should exist for:
-
-- routed networks
-- VLAN-separated environments
-- environments where mDNS is blocked
-
-Recommended fallbacks:
-
-- manual add by IP or hostname
-- QR code or copy-paste bootstrap URL for device setup
-- optional manual pairing code
-
-These are fallback paths, not the preferred default UX.
+- the orchestrator scans only when the admin asks
 
 ## Authorisation Rules
 
-### GUI / admin capabilities
+### Admin capabilities
 
-GUI-authenticated admins may:
+Admin-authenticated clients may:
 
-- discover devices
-- approve devices
-- revoke device tokens
-- manage integrations
-- manage tools
-- manage resources
-- inspect publication state
+- manage tools and tool versions
+- manage resources and resource versions
+- publish catalog changes
+- restart MCP
+- manage device records
+- issue or revoke device tokens
+- inspect auth and publication state
 
 ### Device capabilities
 
@@ -264,17 +224,17 @@ Device-authenticated clients may:
 
 - call response endpoints
 - open listen sessions
-- identify themselves with device metadata
+- identify themselves through authenticated metadata such as `hello`
+- use lightweight helper routes when intentionally exposed
 
 Devices may not:
 
 - access `/api/v1/admin/*`
 - publish catalog changes
-- issue tokens
+- mint credentials
+- manage other devices
 
 ## Data Model Direction
-
-The auth and discovery model likely needs more structure than a single generic token table.
 
 Current implemented entities:
 
@@ -282,33 +242,37 @@ Current implemented entities:
 - `admin_sessions`
 - `devices`
 - `device_tokens`
+- `tools`
+- `tool_versions`
+- `tool_publish_events`
+- `resources`
+- `resource_versions`
+- `resource_publish_events`
 
-Future likely entities:
+Likely future entities:
 
-- `device_discovery_events`
-- optional richer admin-user model if multi-user admin support is needed later
+- discovery scan snapshots or discovery event tables
+- pairing attempt audit history
+- richer admin-user model if multi-user support is needed later
 
-Device tokens should be tied to a device record rather than treated as generic user-style API keys.
+## Relationship To Catalog Management
 
-## Relationship To MCP Catalog Management
+The catalog management model is:
 
-The original goal is to allow a GUI to create and manage MCP integrations, tools, and resources through the orchestrator.
-
-That means:
-
-- orchestrator exposes admin CRUD APIs for catalog management
+- orchestrator exposes admin CRUD and publish APIs
 - orchestrator writes drafts and publication state to Postgres
-- `mcp-server` remains runtime read-only against the published catalog
+- `mcp-server` reads the published catalog and exposes runtime tools
 
 Catalog management should always be admin-authenticated, never device-authenticated.
 
 ## Summary
 
-The intended model is:
+The current model is:
 
 - orchestrator is the only public app service
-- GUI uses admin auth
-- edge devices use device tokens
-- device onboarding is driven by mDNS discovery plus admin approval
-- pairing completes by sending the issued token to a temporary device pairing endpoint
-- MCP catalog management lives behind admin-only orchestrator routes
+- GUI uses admin bearer sessions
+- paired edge devices use device bearer tokens
+- canonical `device_id` is orchestrator-issued, not MAC-derived
+- discovery is intended to use mDNS plus admin approval
+- pairing completes by sending `device_id` and token to a temporary device pairing endpoint
+- tool and resource management live behind admin-only orchestrator routes

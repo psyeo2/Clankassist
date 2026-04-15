@@ -36,8 +36,54 @@ The header and footer are nice, but stop too abruptly. It is jarring. They shoul
 
 New tool button is very ugly. Icon is not acceptable. Icons on that page need work in general.
 
-## 6. The Websocket
+## 6. The Websocket ✅
 
 Allow perpetual audio streaming to a websocket with wake word and VAD determining what gets sent to whisper, then responses sent back across the websocket.
 
 ## 7. Have a look at unreachable api box. It is inconsistent.
+
+## 8. distirbution considerations
+
+clankassist-core comprises orchestrator (and mcp) and gui
+
+gui options to add llm, stt, tts, db config, or docker compose options for prev?
+
+defaults?
+
+```
+The GUI could have a page like:
+
+Providers
+LLM
+    Mode:
+        External
+        Local managed
+    Base URL
+    Model
+    API key
+    Test button
+STT
+    Mode:
+        External
+        Local managed
+    Base URL
+    Model / backend
+    Test button
+TTS
+    Mode:
+        External
+        Local managed
+    Base URL
+    Voice
+    Test button
+Database
+    Mode:
+        External
+        Local managed
+    Connection details
+    Health check
+
+Then if "local managed" is chosen but the service is missing (from the compose?), the GUI can say:
+- service not available in current deployment
+- enable it in your compose / Helm values
+```

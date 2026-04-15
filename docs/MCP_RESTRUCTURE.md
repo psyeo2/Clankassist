@@ -1,14 +1,17 @@
-# MCP Restructure Plan
+# MCP Restructure
 
-## Goal
+## Status
 
-Align the platform with standard MCP practices while preserving the product requirements that already work well:
+The major restructure described here is largely complete.
 
-- MCP server loads and executes the active Postgres-backed tool catalog
-- explicit direct tool execution (without planner)
-- orchestrator-owned planner, governance, and admin workflows
+The platform now has the intended broad shape:
 
-The target state is **tool-owned execution**. Integrations are removed as a required model layer. MCP remains focused on active catalog registration + execution, while lifecycle governance stays outside MCP core.
+- `orchestrator` owns planning, governance, auth, and user-facing HTTP/websocket routes
+- `mcp-server` owns runtime tool registration and execution
+- Postgres stores tool definitions, versions, resources, and publication state
+- published tool execution is driven by tool-owned `execution_spec`
+
+This document now describes the achieved state and the remaining cleanup.
 
 ## 1) Required Features
 
@@ -22,7 +25,7 @@ This section separates responsibilities by scope.
 4. Strict input/result schema support.
 5. Safe outbound execution controls: allowed hosts, timeout, auth handling.
 6. Structured output support for machine-consumable results.
-7. Backward-compatible operational migration with low downtime.
+7. Stable runtime behaviour during catalog updates.
 
 ### Platform/orchestrator features (outside MCP server core)
 
@@ -32,14 +35,15 @@ This section separates responsibilities by scope.
 4. Version lifecycle governance: draft, validated, published, archived.
 5. Publish, rollback, and audit history.
 
-## 2) Current System and How It Achieves Features
+## 2) Current System And How It Achieves Features
 
 ### Architecture summary
 
-- A separate `integrations` table stores shared HTTP config (base_url, auth strategy, auth config, headers, host allow-list, timeout).
-- `tools` references an integration.
-- `tool_versions` stores schema and `execution_spec`.
-- MCP server loads `published_tool_catalog` and runs a generic HTTP executor.
+- `tools` stores identity, enablement, planner visibility, and current published version pointer.
+- `tool_versions` stores schema, execution summary, execution mode, and full `execution_spec`.
+- `resources` and `resource_versions` provide the same publication model for resources.
+- MCP server loads `published_tool_catalog` and `published_resource_catalog` from Postgres.
+- The generic executor reads execution details from the published tool definition itself.
 
 ### What works well today
 
@@ -51,32 +55,25 @@ This section separates responsibilities by scope.
 
 ### Current pain points
 
-1. MCP model drift: tool behavior is split across two entities (tool + integration), which is not MCP-native.
-2. Extra operational overhead: creating a tool requires integration setup, even when not reusable.
-3. Cognitive overhead in UI and API: users must understand integration/tool linkage.
-4. More moving parts than needed for most tools.
+1. Some runtime names still carry old `integration_*` terminology even though tools own execution now.
+2. Validation of `execution_spec` is still looser than it should be.
+3. Admin UX can do more to preview, validate, and explain execution behaviour before publish.
+4. There are not enough automated regression tests around catalog publication and generic execution.
 
-## 3) Ideal System and How It Would Achieve Features
+## 3) Target Model
 
-## Core principle
+### Core principle
 
 **Each tool version owns its complete execution definition.**
 
-No mandatory integration entity. A published tool version is self-contained and runnable.
+A published tool version is self-contained and runnable.
 
 ### Target data model
 
 1. Keep `tools` as identity and publish pointer.
 2. Keep `tool_versions` as versioned source of truth.
-3. Expand `tool_versions.execution_spec` (or add typed columns) to include all execution details currently living in integrations:
-	- transport/mode
-	- base URL
-	- auth strategy/config
-	- default headers
-	- allowed hosts
-	- timeout
-	- request and response mapping
-4. Remove integration join dependency from published tool view.
+3. Keep `execution_spec` as the executable source of truth for generic tools.
+4. Keep `resources` and `resource_versions` on the same publication pattern.
 
 ### Target runtime model
 
@@ -89,84 +86,57 @@ No mandatory integration entity. A published tool version is self-contained and 
 
 1. A tool is the executable unit.
 2. Tool metadata and behavior version together.
-3. Registration and execution are directly tied to tool definitions, not a secondary service entity.
+3. Registration and execution are directly tied to tool definitions rather than a separate required model layer.
 
-## 4) Necessary Changes to Get There
+## 4) What Has Already Changed
 
-This is an incremental sequence that preserves service continuity.
+These changes are already reflected in the current repo:
 
-### Phase A: Schema and catalog changes
+- tools no longer depend on a separate integrations table
+- `tool_versions.execution_spec` carries the execution definition
+- `published_tool_catalog` is built from tool and version rows
+- admin routes exist for tools, versions, resources, publish, and MCP restart
+- `mcp-server` loads published tool definitions from Postgres
+- `orchestrator` plans against MCP-listed tools instead of a code-owned registry
 
-1. Remove `integration_id` dependency from `tools` (or make nullable during migration).
-2. Add any missing execution fields into `tool_versions.execution_spec` payload contract.
-3. Update `published_tool_catalog` view to source all execution data from tool versions only.
-4. Keep old integration objects temporarily for migration reads only.
+## 5) Remaining Work
 
-### Phase B: API contract changes
+The restructure is not fully finished until the following cleanup lands:
 
-1. Replace create-tool dependency on integration selection.
-2. Update create-tool-version API to accept full execution config.
-3. Keep legacy endpoints for one migration window (read-only or deprecated behavior).
-4. Add validation rules for execution spec completeness at tool-version creation time.
+1. Tighten `execution_spec` validation at create and publish time.
+2. Add richer operator tooling for preview and validation before publication.
+3. Remove or rename leftover `integration_*` terminology in runtime types where it no longer reflects the real model.
+4. Add stronger regression coverage around generic executor behaviour, publication, and MCP reload.
+5. Keep frontend UX aligned with the tool-owned execution model.
 
-### Phase C: Executor and MCP loading
+## 6) Acceptance Criteria
 
-1. Update catalog loader types to stop expecting integration fields.
-2. Update generic executor context to read execution config from the tool version.
-3. Keep current extraction features (json_path, text, prometheus_metric, templates).
-4. Keep existing safety gates (allowed hosts, timeout, auth strategy handling).
+The restructure can be treated as complete when all of the following are true:
 
-### Phase D: Frontend admin UX
-
-1. Remove Integrations tab and integration CRUD flows.
-2. In tool version form, surface execution config sections:
-	- Request (method/path/query/body)
-	- Auth
-	- Headers
-	- Timeout
-	- Host allow-list
-	- Response extraction/formatting
-3. Keep publish/rollback UX as-is.
-
-### Phase E: Data migration
-
-1. For each tool version, denormalize current integration settings into execution_spec.
-2. Validate migrated versions against the new execution-spec schema.
-3. Rebuild published view and restart orchestrator/MCP server.
-4. Remove integrations table and related indexes/routes after verification.
-
-### Phase F: Planner and direct execution behavior
-
-1. Keep planner consuming `mcpClient.listTools()`.
-2. Preserve explicit direct execution by tool name and args.
-3. Maintain unsupported-request handling behavior.
-
-## Acceptance Criteria
-
-The restructure is complete when all of the following are true:
-
-1. New tools can be created and published without creating an integration.
+1. New tools can be created and published without any separate integration entity.
 2. A published tool version contains all data needed to execute.
-3. MCP server registry still loads from Postgres published catalog.
+3. MCP server registry still loads from the Postgres published catalog.
 4. Direct execution by explicit tool name works.
 5. Planner mode still works and only sees valid published tools.
-6. Safety controls and auth behaviors are unchanged or improved.
-7. Integration tables/routes are no longer required for runtime operation.
+6. Validation and safety controls are strong enough to reject malformed execution specs before publication.
+7. The remaining docs, naming, and UI no longer imply an old integration-owned execution model.
 
-## Risks and Mitigations
+## 7) Risks And Mitigations
 
 1. Risk: malformed execution specs.
 	- Mitigation: strict validation at tool-version creation and publish time.
 2. Risk: migration regressions in existing tools.
-	- Mitigation: scripted backfill + verification tests per published tool.
+	- Mitigation: publish-time verification plus regression tests per published tool.
 3. Risk: temporary UI confusion during transition.
 	- Mitigation: phase UI changes with explicit deprecation messaging.
 
-## Recommended Implementation Strategy
+## 8) Recommendation
 
-1. Implement dual-read runtime first (new tool-owned spec preferred, integration fallback).
-2. Migrate data.
-3. Flip APIs/UI to tool-owned only.
-4. Remove fallback and integrations.
+Treat the schema and runtime migration as done.
 
-This delivers the target MCP-aligned model with minimal service interruption.
+The next work should focus on quality:
+
+1. validation
+2. previewability
+3. testing
+4. cleanup of stale naming and docs
