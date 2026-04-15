@@ -1,10 +1,12 @@
 import type { RequestHandler } from "express";
 
-import { extractToolText } from "../helpers/toolResult.js";
-import { planToolSelection } from "../services/llm.js";
-import { mcpClient } from "../services/mcpClient.js";
 import { synthesiseSpeech } from "../services/piperApi.js";
-import { transcribeAudio } from "../services/whisperApi.js";
+import {
+  type BufferedAudioInput,
+  executeBufferedAudioSpeech,
+  executeDirectToolSelection,
+  executePlannedSpeech,
+} from "../services/respondPipeline.js";
 import { HttpError } from "../utils/errors.js";
 import { parseMultipartFile } from "../utils/multipart.js";
 import {
@@ -61,48 +63,6 @@ const parseOutput = (rawOutput: unknown): RespondOutput => {
   throw new HttpError(400, "Invalid output type. Expected 'json', 'text', or 'audio'.");
 };
 
-const executePlannedSpeech = async (
-  speech: string,
-): Promise<{
-  unsupported: boolean;
-  selection: {
-    tool: string;
-    args: Record<string, unknown>;
-  };
-  responseText: string;
-  result?: unknown;
-}> => {
-  const plan = await planToolSelection(speech);
-  const selectedTool = plan.tool.trim();
-  const responseText =
-    plan.response.trim() !== ""
-      ? plan.response
-      : "I cannot help with that request using the available tools.";
-
-  if (selectedTool === "" || selectedTool === "system.unsupported_request") {
-    return {
-      unsupported: true,
-      selection: {
-        tool: "system.unsupported_request",
-        args: {},
-      },
-      responseText,
-    };
-  }
-
-  const result = await mcpClient.callTool(selectedTool, plan.args);
-
-  return {
-    unsupported: false,
-    selection: {
-      tool: selectedTool,
-      args: plan.args,
-    },
-    responseText: extractToolText(result) || responseText,
-    result,
-  };
-};
-
 const respondWithOutput = async (
   response: Parameters<RequestHandler>[1],
   output: RespondOutput,
@@ -138,9 +98,9 @@ const respondWithOutput = async (
   });
 };
 
-const transcribeMultipartOrRawAudio = async (
+const parseMultipartOrRawAudio = async (
   request: Parameters<RequestHandler>[0],
-): Promise<{ transcript: string; source: "raw_audio" | "multipart_audio" }> => {
+): Promise<{ input: BufferedAudioInput; source: "raw_audio" | "multipart_audio" }> => {
   if (!Buffer.isBuffer(request.body) || request.body.length === 0) {
     throw new HttpError(400, "No request body was provided.");
   }
@@ -148,14 +108,12 @@ const transcribeMultipartOrRawAudio = async (
   const contentType = request.header("content-type") ?? "application/octet-stream";
   if (contentType.startsWith("multipart/form-data")) {
     const file = parseMultipartFile(request.body, contentType);
-    const transcription = await transcribeAudio({
-      audioBuffer: file.bytes,
-      contentType: file.contentType,
-      filename: file.filename,
-    });
-
     return {
-      transcript: transcription.text,
+      input: {
+        audioBuffer: file.bytes,
+        contentType: file.contentType,
+        filename: file.filename,
+      },
       source: "multipart_audio",
     };
   }
@@ -164,14 +122,12 @@ const transcribeMultipartOrRawAudio = async (
     typeof request.query.filename === "string" && request.query.filename.trim() !== ""
       ? request.query.filename
       : "audio.wav";
-  const transcription = await transcribeAudio({
-    audioBuffer: request.body,
-    contentType,
-    filename,
-  });
-
   return {
-    transcript: transcription.text,
+    input: {
+      audioBuffer: request.body,
+      contentType,
+      filename,
+    },
     source: "raw_audio",
   };
 };
@@ -219,8 +175,8 @@ export const respond: RequestHandler = async (request, response): Promise<void> 
       return;
     }
 
-    const { transcript, source } = await transcribeMultipartOrRawAudio(request);
-    const execution = await executePlannedSpeech(transcript);
+    const { input, source } = await parseMultipartOrRawAudio(request);
+    const { transcript, execution } = await executeBufferedAudioSpeech(input);
 
     if (execution.unsupported) {
       await respondWithOutput(response, output, {
@@ -255,18 +211,17 @@ export const respond: RequestHandler = async (request, response): Promise<void> 
   const body = isRecord(request.body) ? (request.body as DirectToolBody) : {};
   const selection = resolveSelection(body);
   if (selection) {
-    const result = await mcpClient.callTool(selection.tool, selection.args);
-    const text = extractToolText(result);
+    const execution = await executeDirectToolSelection(selection);
 
     await respondWithOutput(response, output, {
       json: {
         mode: "direct_tool",
-        tool: selection.tool,
-        args: selection.args,
-        result,
+        tool: execution.selection.tool,
+        args: execution.selection.args,
+        result: execution.result,
       },
-      text,
-      message: `Tool executed: ${selection.tool}`,
+      text: execution.responseText,
+      message: `Tool executed: ${execution.selection.tool}`,
     });
     return;
   }
